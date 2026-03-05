@@ -1,0 +1,70 @@
+{
+  "name": "repo-intelligence-prompt-engine",
+  "displayName": "Repo Intelligence Prompt Engine",
+  "description": "Industry-grade repository-aware prompt generator optimized for GitHub Copilot and LLM workflows.",
+  "version": "1.0.0",
+  "private": true,
+  "author": "Your Name",
+  "license": "MIT",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "node": ">=18.0.0",
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:repoPrompt.sidebar"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "repoPrompt",
+          "title": "Repo Prompt",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "repoPrompt": [
+        {
+          "type": "webview",
+          "id": "repoPrompt.sidebar",
+          "name": "Prompt Builder"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "repoPrompt.generate",
+        "title": "Generate Smart Prompt"
+      }
+    ]
+  },
+  "types": "dist/extension.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "start": "node dist/extension.js",
+    "dev": "ts-node src/extension.ts",
+    "lint": "eslint . --ext .ts",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "glob": "^10.3.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5",
+    "ts-node": "^10.9.2",
+    "rimraf": "^5.0.5",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/parser": "^7.2.0",
+    "@typescript-eslint/eslint-plugin": "^7.2.0"
+  }
+}

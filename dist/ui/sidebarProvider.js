@@ -78,8 +78,23 @@ class SidebarProvider {
             }
             if (message.command === "sendToCopilot") {
                 await vscode.env.clipboard.writeText(message.text);
-                await vscode.commands.executeCommand("github.copilot.chat.focus");
-                vscode.window.showInformationMessage("Prompt copied! Paste it in Copilot Chat.");
+                try {
+                    // Try different Copilot commands
+                    const commands = await vscode.commands.getCommands();
+                    if (commands.includes("workbench.panel.chat.view.copilot.focus")) {
+                        await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
+                    }
+                    else if (commands.includes("github.copilot.chat.focus")) {
+                        await vscode.commands.executeCommand("github.copilot.chat.focus");
+                    }
+                    else if (commands.includes("workbench.action.chat.open")) {
+                        await vscode.commands.executeCommand("workbench.action.chat.open");
+                    }
+                    vscode.window.showInformationMessage("Prompt copied! Paste it in Copilot Chat.");
+                }
+                catch (err) {
+                    vscode.window.showInformationMessage("Prompt copied to clipboard! Open Copilot Chat to paste.");
+                }
             }
         });
     }

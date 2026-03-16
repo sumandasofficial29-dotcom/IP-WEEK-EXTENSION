@@ -38,8 +38,17 @@ exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const sidebarProvider_1 = require("./ui/sidebarProvider");
 function activate(context) {
+    console.log('Repo Intelligence Prompt Engine is now active!');
     const sidebarProvider = new sidebarProvider_1.SidebarProvider(context.extensionUri);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider("repoPrompt.sidebar", sidebarProvider));
+    // Register command for manual trigger
+    const generateCommand = vscode.commands.registerCommand("repoPrompt.generate", () => {
+        vscode.window.showInformationMessage("Open the Repo Prompt sidebar from the Activity Bar!");
+    });
+    context.subscriptions.push(generateCommand);
+    console.log('Repo Intelligence Prompt Engine sidebar registered');
 }
-function deactivate() { }
+function deactivate() {
+    console.log('Repo Intelligence Prompt Engine deactivated');
+}
 //# sourceMappingURL=extension.js.map

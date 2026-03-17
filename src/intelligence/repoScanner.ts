@@ -6,12 +6,13 @@ import { DeepRepoAnalyzer, DeepRepoInsights } from "./deepRepoAnalyzer";
 import { extractClasses } from "./ast/symbolIndexer";
 import { ClassInfo, RepoStructure } from "./ast/types";
 import { buildDependencyGraph, DependencyNode } from "./ast/dependencyGraphBuilder";
+import { buildCompactStructure } from "./fileStructureBuilder";
 
 export interface RepoScanResult {
   projectRoot: string;
   dependencies: Record<string, string>;
   insights: DeepRepoInsights;
-  fileTree: string[];
+  fileTree: string;
   isAngular: boolean;
   isReact: boolean;
   structure: RepoStructure;
@@ -36,7 +37,7 @@ export class RepoScanner {
       projectRoot,
       dependencies,
       insights,
-      fileTree: this.buildTree(projectRoot, 3),
+      fileTree: buildCompactStructure(projectRoot),
       isAngular: insights.hasAngular,
       isReact: insights.hasReact,
       structure,
@@ -97,31 +98,5 @@ export class RepoScanner {
       components,
       utils
     };
-  }
-
-  private buildTree(dir: string, depth: number, prefix = ""): string[] {
-    if (depth === 0) return [];
-
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      return [];
-    }
-
-    return entries
-      .filter(f => !f.startsWith(".") && f !== "node_modules")
-      .flatMap(file => {
-        const full = path.join(dir, file);
-        const current = prefix + file;
-        try {
-          if (fs.statSync(full).isDirectory()) {
-            return [current, ...this.buildTree(full, depth - 1, current + "/")];
-          }
-          return [current];
-        } catch {
-          return [current];
-        }
-      });
   }
 }

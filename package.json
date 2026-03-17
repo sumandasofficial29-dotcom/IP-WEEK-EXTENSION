@@ -1,7 +1,7 @@
 {
-  "name": "repo-intelligence-prompt-engine",
-  "displayName": "Repo Intelligence Prompt Engine",
-  "description": "Industry-grade repository-aware prompt generator optimized for GitHub Copilot and LLM workflows.",
+  "name": "promptcraft",
+  "displayName": "PromptCraft",
+  "description": "Smart prompt generator that helps you get accurate Copilot solutions in fewer tries.",
   "version": "1.0.0",
   "private": true,
   "author": "Your Name",

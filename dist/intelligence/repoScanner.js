@@ -41,6 +41,7 @@ const dependencyAnalyzer_1 = require("./dependencyAnalyzer");
 const deepRepoAnalyzer_1 = require("./deepRepoAnalyzer");
 const symbolIndexer_1 = require("./ast/symbolIndexer");
 const dependencyGraphBuilder_1 = require("./ast/dependencyGraphBuilder");
+const fileStructureBuilder_1 = require("./fileStructureBuilder");
 class RepoScanner {
     rootDetector = new projectRootDetector_1.ProjectRootDetector();
     depAnalyzer = new dependencyAnalyzer_1.DependencyAnalyzer();
@@ -56,7 +57,7 @@ class RepoScanner {
             projectRoot,
             dependencies,
             insights,
-            fileTree: this.buildTree(projectRoot, 3),
+            fileTree: (0, fileStructureBuilder_1.buildCompactStructure)(projectRoot),
             isAngular: insights.hasAngular,
             isReact: insights.hasReact,
             structure,
@@ -105,32 +106,6 @@ class RepoScanner {
             components,
             utils
         };
-    }
-    buildTree(dir, depth, prefix = "") {
-        if (depth === 0)
-            return [];
-        let entries;
-        try {
-            entries = fs.readdirSync(dir);
-        }
-        catch {
-            return [];
-        }
-        return entries
-            .filter(f => !f.startsWith(".") && f !== "node_modules")
-            .flatMap(file => {
-            const full = path.join(dir, file);
-            const current = prefix + file;
-            try {
-                if (fs.statSync(full).isDirectory()) {
-                    return [current, ...this.buildTree(full, depth - 1, current + "/")];
-                }
-                return [current];
-            }
-            catch {
-                return [current];
-            }
-        });
     }
 }
 exports.RepoScanner = RepoScanner;

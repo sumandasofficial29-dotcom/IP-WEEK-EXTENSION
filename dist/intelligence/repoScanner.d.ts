@@ -5,7 +5,7 @@ export interface RepoScanResult {
     projectRoot: string;
     dependencies: Record<string, string>;
     insights: DeepRepoInsights;
-    fileTree: string[];
+    fileTree: string;
     isAngular: boolean;
     isReact: boolean;
     structure: RepoStructure;
@@ -18,5 +18,4 @@ export declare class RepoScanner {
     scan(workspaceRoot: string): Promise<RepoScanResult>;
     private collectTsFiles;
     private buildStructure;
-    private buildTree;
 }

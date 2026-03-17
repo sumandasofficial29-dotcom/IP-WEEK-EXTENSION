@@ -36,41 +36,94 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PromptEngine = void 0;
 const vscode = __importStar(require("vscode"));
 const repoScanner_1 = require("../intelligence/repoScanner");
-const promptAssembler_1 = require("../assembler/promptAssembler");
 const intentResolver_1 = require("../intent/intentResolver");
-const fileRelevanceScorer_1 = require("../intelligence/context/fileRelevanceScorer");
-const smartContextBuilder_1 = require("../intelligence/context/smartContextBuilder");
-const contextMode_1 = require("../intelligence/context/contextMode");
+const contextCompressor_1 = require("../intelligence/contextCompressor");
+const inputValidator_1 = require("../intelligence/inputValidator");
+const promptQualityAnalyzer_1 = require("../intelligence/promptQualityAnalyzer");
+const taskAnalyzer_1 = require("../intelligence/taskAnalyzer");
+const targetedContextExtractor_1 = require("../intelligence/targetedContextExtractor");
+const smartPromptGenerator_1 = require("../templates/smartPromptGenerator");
+const dependencyImpactAnalyzer_1 = require("../intelligence/dependencyImpactAnalyzer");
 class PromptEngine {
     scanner = new repoScanner_1.RepoScanner();
-    assembler = new promptAssembler_1.PromptAssembler();
     resolver = new intentResolver_1.IntentResolver();
+    compressor = new contextCompressor_1.ContextCompressor();
     async generate(root, userInput) {
-        // 1. Scan repository for deep insights
-        const scan = await this.scanner.scan(root);
-        // 2. Detect scenario from user input
-        const scenario = this.resolver.resolve(userInput);
-        // 3. Detect context mode (explanation, feature, bugfix, etc.)
-        const mode = (0, contextMode_1.detectContextMode)(userInput);
-        // 4. Get active editor file info
+        // 1. Validate input quality
+        const inputAnalysis = (0, inputValidator_1.analyzeInputQuality)(userInput);
+        // 2. Get active editor file info
         const activeEditor = vscode.window.activeTextEditor;
         const activeFilePath = activeEditor?.document.uri.fsPath;
-        // 5. Score and select relevant files based on task + active file
-        const relevantFiles = (0, fileRelevanceScorer_1.scoreFiles)(userInput, scan.structure.classes, activeFilePath);
-        // 6. Build smart context with mode awareness
-        const smartContext = (0, smartContextBuilder_1.buildSmartContext)({
-            task: userInput,
-            classes: scan.structure.classes,
-            relevantFiles,
-            activeFilePath,
-            activeFileContent: activeEditor?.document.getText(),
-            mode
+        const activeFileContent = activeEditor?.document.getText();
+        // 3. Deep task analysis - understand what the user wants
+        const taskAnalysis = (0, taskAnalyzer_1.analyzeTask)(userInput, activeFilePath);
+        // 4. Scan repository for structure
+        const scan = await this.scanner.scan(root);
+        // 5. Detect scenario from user input
+        const scenario = this.resolver.resolve(userInput);
+        // 6. Get repo context summary (tech stack, dependencies)
+        const repoContext = this.compressor.compress(scan);
+        const techStack = this.compressor.getTechStack();
+        // 7. Detect framework
+        const framework = techStack?.frameworks[0]?.name ||
+            (scan.insights.hasAngular ? "Angular" :
+                scan.insights.hasReact ? "React" :
+                    techStack?.primaryLanguage || "TypeScript");
+        // 8. Get test framework
+        const testFramework = techStack?.architecture.testing.framework ||
+            scan.insights.testFramework || "Jest";
+        // 9. Extract targeted context based on task analysis
+        const targetedContext = (0, targetedContextExtractor_1.extractTargetedContext)(taskAnalysis, root, activeFilePath, activeFileContent, scan.structure.classes);
+        const codeContext = (0, targetedContextExtractor_1.formatTargetedContext)(targetedContext);
+        // 10. Analyze dependency impact (what files could break)
+        let dependencyImpact;
+        if (activeFilePath && (taskAnalysis.action === "modify" ||
+            taskAnalysis.action === "refactor" ||
+            taskAnalysis.action === "fix" ||
+            taskAnalysis.action === "delete")) {
+            dependencyImpact = (0, dependencyImpactAnalyzer_1.analyzeDependencyImpact)(activeFilePath, root);
+        }
+        // 11. Generate smart, LLM-optimized prompt
+        const smartPrompt = (0, smartPromptGenerator_1.generateSmartPrompt)({
+            scenario,
+            framework,
+            task: taskAnalysis,
+            repoContext,
+            codeContext,
+            testFramework,
+            dependencyImpact
         });
-        // 7. Assemble contextual prompt with smart context
-        const basePrompt = this.assembler.assemble(userInput, scan, scenario);
-        return smartContext
-            ? `${basePrompt}\n\n${smartContext}`
-            : basePrompt;
+        // 11. Calculate real-time quality score
+        const qualityAnalysis = (0, promptQualityAnalyzer_1.analyzePromptQuality)({
+            userTask: userInput,
+            activeFilePath,
+            activeFileContent,
+            relevantFilesCount: targetedContext.relatedFiles.length,
+            classesFound: scan.structure.classes.length,
+            methodsFound: scan.structure.classes.reduce((sum, c) => sum + c.methods.length, 0),
+            interfacesFound: targetedContext.relatedClasses.length,
+            frameworkDetected: framework,
+            hasRoutes: scan.insights.hasRouting,
+            hasAPIs: scan.structure.services.length > 0,
+            dependenciesCount: Object.keys(scan.dependencies).length,
+            repoStructureDepth: (scan.structure.classes.length > 0 ? 3 : 1)
+        });
+        return {
+            prompt: smartPrompt,
+            qualityScore: qualityAnalysis.overallScore,
+            qualityExplanation: (0, promptQualityAnalyzer_1.explainQuality)(qualityAnalysis),
+            qualityDetails: qualityAnalysis,
+            taskAnalysis,
+            inputIssues: inputAnalysis.issues.map(i => ({ type: i.type, message: i.message })),
+            suggestions: [...inputAnalysis.suggestions, ...qualityAnalysis.improvements]
+        };
+    }
+    /**
+     * Legacy method for backward compatibility
+     */
+    async generateSimple(root, userInput) {
+        const result = await this.generate(root, userInput);
+        return result.prompt;
     }
 }
 exports.PromptEngine = PromptEngine;

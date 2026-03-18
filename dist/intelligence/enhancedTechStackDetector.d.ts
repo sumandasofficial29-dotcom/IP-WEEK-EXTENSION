@@ -31,6 +31,7 @@ export interface ArchitectureInfo {
     build: {
         bundler?: string;
         transpiler?: string;
+        buildSystem?: string;
     };
 }
 export interface DependencyInfo {
@@ -59,23 +60,34 @@ export declare class EnhancedTechStackDetector {
     private packageJson;
     private allDeps;
     private depVersions;
+    private fileExtensionCounts;
+    private totalFiles;
+    private detectedBuildSystems;
+    private detectedTestFrameworks;
     constructor(rootPath: string);
     private loadPackageJson;
+    /**
+     * Scan all file extensions to detect languages (works without package.json)
+     */
+    private scanFileExtensions;
     analyze(): TechStackResult;
     private detectFrameworks;
     private detectPrimaryLanguage;
     private detectLanguages;
     private analyzeArchitecture;
     private detectPatterns;
-    private detectStyling;
+    private detectBuildSystemsFromFiles;
     private detectTesting;
+    private detectBuildTools;
+    private detectProjectType;
+    private hasLanguageFiles;
+    private hasCodePattern;
+    private getVersion;
+    private detectStyling;
     private detectStateManagement;
     private detectRouting;
     private detectAPIStyle;
-    private detectBuildTools;
     private categorizeDependencies;
-    private detectProjectType;
-    private getVersion;
     private hasDirectory;
     private hasFilesMatching;
     private walkFiles;

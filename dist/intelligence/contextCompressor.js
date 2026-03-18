@@ -2,13 +2,67 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContextCompressor = void 0;
 const enhancedTechStackDetector_1 = require("./enhancedTechStackDetector");
+const cacheManager_1 = require("./cacheManager");
 class ContextCompressor {
     techStack = null;
     compress(scan) {
-        // Use enhanced tech stack detection
-        const detector = new enhancedTechStackDetector_1.EnhancedTechStackDetector(scan.projectRoot);
-        this.techStack = detector.analyze();
+        // Check cache for tech stack
+        const cachedTechStack = cacheManager_1.cacheManager.getTechStack(scan.projectRoot);
+        if (cachedTechStack) {
+            console.log('[PromptCraft] Using cached tech stack');
+            this.techStack = this.techStackCacheToResult(cachedTechStack);
+        }
+        else {
+            console.log('[PromptCraft] Detecting tech stack (fresh)');
+            // Use enhanced tech stack detection
+            const detector = new enhancedTechStackDetector_1.EnhancedTechStackDetector(scan.projectRoot);
+            this.techStack = detector.analyze();
+            // Cache the tech stack
+            cacheManager_1.cacheManager.setTechStack(scan.projectRoot, {
+                primaryLanguage: this.techStack.primaryLanguage,
+                languages: this.techStack.languages,
+                frameworks: this.techStack.frameworks.map(f => ({
+                    name: f.name,
+                    version: f.version,
+                    confidence: f.confidence
+                })),
+                buildSystems: this.techStack.architecture.build.buildSystem?.split(", ") || [],
+                testFrameworks: this.techStack.architecture.testing.framework ?
+                    [this.techStack.architecture.testing.framework] : [],
+                projectType: this.techStack.projectType
+            });
+        }
         return this.buildFormattedContext(scan, this.techStack);
+    }
+    /**
+     * Convert cached tech stack to full TechStackResult
+     */
+    techStackCacheToResult(cache) {
+        return {
+            primaryLanguage: cache.primaryLanguage,
+            languages: cache.languages,
+            frameworks: cache.frameworks.map(f => ({
+                name: f.name,
+                version: f.version,
+                confidence: f.confidence,
+                indicators: []
+            })),
+            architecture: {
+                patterns: [],
+                styling: {},
+                testing: { framework: cache.testFrameworks[0] },
+                stateManagement: {},
+                routing: { routes: [] },
+                api: {},
+                build: { buildSystem: cache.buildSystems.join(", ") }
+            },
+            dependencies: {
+                production: [],
+                development: [],
+                byCategory: {}
+            },
+            projectType: cache.projectType
+        };
     }
     buildFormattedContext(scan, tech) {
         const sections = [];

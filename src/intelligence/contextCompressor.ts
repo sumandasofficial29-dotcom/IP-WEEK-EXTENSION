@@ -1,15 +1,71 @@
 import { RepoScanResult } from "./repoScanner";
 import { EnhancedTechStackDetector, TechStackResult } from "./enhancedTechStackDetector";
+import { cacheManager, TechStackCache } from "./cacheManager";
 
 export class ContextCompressor {
   private techStack: TechStackResult | null = null;
 
   compress(scan: RepoScanResult): string {
-    // Use enhanced tech stack detection
-    const detector = new EnhancedTechStackDetector(scan.projectRoot);
-    this.techStack = detector.analyze();
+    // Check cache for tech stack
+    const cachedTechStack = cacheManager.getTechStack(scan.projectRoot);
+    
+    if (cachedTechStack) {
+      console.log('[PromptCraft] Using cached tech stack');
+      this.techStack = this.techStackCacheToResult(cachedTechStack);
+    } else {
+      console.log('[PromptCraft] Detecting tech stack (fresh)');
+      // Use enhanced tech stack detection
+      const detector = new EnhancedTechStackDetector(scan.projectRoot);
+      this.techStack = detector.analyze();
+      
+      // Cache the tech stack
+      cacheManager.setTechStack(scan.projectRoot, {
+        primaryLanguage: this.techStack.primaryLanguage,
+        languages: this.techStack.languages,
+        frameworks: this.techStack.frameworks.map(f => ({
+          name: f.name,
+          version: f.version,
+          confidence: f.confidence
+        })),
+        buildSystems: this.techStack.architecture.build.buildSystem?.split(", ") || [],
+        testFrameworks: this.techStack.architecture.testing.framework ? 
+          [this.techStack.architecture.testing.framework] : [],
+        projectType: this.techStack.projectType
+      });
+    }
 
     return this.buildFormattedContext(scan, this.techStack);
+  }
+
+  /**
+   * Convert cached tech stack to full TechStackResult
+   */
+  private techStackCacheToResult(cache: TechStackCache): TechStackResult {
+    return {
+      primaryLanguage: cache.primaryLanguage,
+      languages: cache.languages,
+      frameworks: cache.frameworks.map(f => ({
+        name: f.name,
+        version: f.version,
+        confidence: f.confidence,
+        indicators: []
+      })),
+      architecture: {
+        patterns: [],
+        styling: {},
+        testing: { framework: cache.testFrameworks[0] },
+        stateManagement: {},
+        routing: { routes: [] },
+        api: {},
+        build: { buildSystem: cache.buildSystems.join(", ") }
+      },
+      dependencies: {
+        production: [],
+        development: [],
+        byCategory: {}
+      },
+      projectType: cache.projectType
+    };
   }
 
   private buildFormattedContext(scan: RepoScanResult, tech: TechStackResult): string {

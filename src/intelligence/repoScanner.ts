@@ -7,6 +7,7 @@ import { extractClasses } from "./ast/symbolIndexer";
 import { ClassInfo, RepoStructure } from "./ast/types";
 import { buildDependencyGraph, DependencyNode } from "./ast/dependencyGraphBuilder";
 import { buildCompactStructure } from "./fileStructureBuilder";
+import { cacheManager } from "./cacheManager";
 
 export interface RepoScanResult {
   projectRoot: string;
@@ -25,19 +26,52 @@ export class RepoScanner {
   private deepAnalyzer = new DeepRepoAnalyzer();
 
   async scan(workspaceRoot: string): Promise<RepoScanResult> {
+    const scanStart = Date.now();
     const projectRoot = this.rootDetector.detect(workspaceRoot);
+
+    // Check cache for repo structure
+    const cachedStructure = cacheManager.getRepoStructure(projectRoot);
+    let fileTree: string;
+    let tsFiles: string[];
+    let usedCache = false;
+
+    if (cachedStructure && cachedStructure.fileList) {
+      // Use cached data
+      console.log('[PromptCraft] Using cached repo structure');
+      fileTree = cachedStructure.folderTree;
+      tsFiles = cachedStructure.fileList;
+      usedCache = true;
+    } else {
+      // Scan fresh and cache
+      console.log('[PromptCraft] Scanning repo structure (fresh)');
+      
+      fileTree = buildCompactStructure(projectRoot);
+      tsFiles = this.collectTsFiles(projectRoot);
+      
+      // Cache the structure
+      cacheManager.setRepoStructure(projectRoot, {
+        fileCount: tsFiles.length,
+        folderTree: fileTree,
+        fileList: tsFiles,
+        scanDepth: 6
+      });
+    }
 
     const dependencies = this.depAnalyzer.analyze(projectRoot);
     const insights = this.deepAnalyzer.analyze(projectRoot);
-    const tsFiles = this.collectTsFiles(projectRoot);
     const structure = this.buildStructure(tsFiles);
     const dependencyGraph = buildDependencyGraph(tsFiles);
+
+    // Record total scan time
+    const scanDuration = Date.now() - scanStart;
+    cacheManager.recordScanTime(scanDuration, usedCache);
+    console.log(`[PromptCraft] Scan completed in ${scanDuration}ms ${usedCache ? '(cached)' : '(fresh)'}`);
 
     return {
       projectRoot,
       dependencies,
       insights,
-      fileTree: buildCompactStructure(projectRoot),
+      fileTree,
       isAngular: insights.hasAngular,
       isReact: insights.hasReact,
       structure,

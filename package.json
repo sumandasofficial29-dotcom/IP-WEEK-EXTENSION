@@ -47,7 +47,15 @@
     "commands": [
       {
         "command": "repoPrompt.generate",
-        "title": "Generate Smart Prompt"
+        "title": "PromptCraft: Generate Smart Prompt"
+      },
+      {
+        "command": "repoPrompt.cacheStats",
+        "title": "PromptCraft: Show Last Scan Time"
+      },
+      {
+        "command": "repoPrompt.clearCache",
+        "title": "PromptCraft: Clear Cache"
       }
     ]
   },

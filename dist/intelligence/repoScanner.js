@@ -42,22 +42,52 @@ const deepRepoAnalyzer_1 = require("./deepRepoAnalyzer");
 const symbolIndexer_1 = require("./ast/symbolIndexer");
 const dependencyGraphBuilder_1 = require("./ast/dependencyGraphBuilder");
 const fileStructureBuilder_1 = require("./fileStructureBuilder");
+const cacheManager_1 = require("./cacheManager");
 class RepoScanner {
     rootDetector = new projectRootDetector_1.ProjectRootDetector();
     depAnalyzer = new dependencyAnalyzer_1.DependencyAnalyzer();
     deepAnalyzer = new deepRepoAnalyzer_1.DeepRepoAnalyzer();
     async scan(workspaceRoot) {
+        const scanStart = Date.now();
         const projectRoot = this.rootDetector.detect(workspaceRoot);
+        // Check cache for repo structure
+        const cachedStructure = cacheManager_1.cacheManager.getRepoStructure(projectRoot);
+        let fileTree;
+        let tsFiles;
+        let usedCache = false;
+        if (cachedStructure && cachedStructure.fileList) {
+            // Use cached data
+            console.log('[PromptCraft] Using cached repo structure');
+            fileTree = cachedStructure.folderTree;
+            tsFiles = cachedStructure.fileList;
+            usedCache = true;
+        }
+        else {
+            // Scan fresh and cache
+            console.log('[PromptCraft] Scanning repo structure (fresh)');
+            fileTree = (0, fileStructureBuilder_1.buildCompactStructure)(projectRoot);
+            tsFiles = this.collectTsFiles(projectRoot);
+            // Cache the structure
+            cacheManager_1.cacheManager.setRepoStructure(projectRoot, {
+                fileCount: tsFiles.length,
+                folderTree: fileTree,
+                fileList: tsFiles,
+                scanDepth: 6
+            });
+        }
         const dependencies = this.depAnalyzer.analyze(projectRoot);
         const insights = this.deepAnalyzer.analyze(projectRoot);
-        const tsFiles = this.collectTsFiles(projectRoot);
         const structure = this.buildStructure(tsFiles);
         const dependencyGraph = (0, dependencyGraphBuilder_1.buildDependencyGraph)(tsFiles);
+        // Record total scan time
+        const scanDuration = Date.now() - scanStart;
+        cacheManager_1.cacheManager.recordScanTime(scanDuration, usedCache);
+        console.log(`[PromptCraft] Scan completed in ${scanDuration}ms ${usedCache ? '(cached)' : '(fresh)'}`);
         return {
             projectRoot,
             dependencies,
             insights,
-            fileTree: (0, fileStructureBuilder_1.buildCompactStructure)(projectRoot),
+            fileTree,
             isAngular: insights.hasAngular,
             isReact: insights.hasReact,
             structure,

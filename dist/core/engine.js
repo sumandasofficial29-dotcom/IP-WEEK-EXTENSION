@@ -69,9 +69,11 @@ class PromptEngine {
             (scan.insights.hasAngular ? "Angular" :
                 scan.insights.hasReact ? "React" :
                     techStack?.primaryLanguage || "TypeScript");
-        // 8. Get test framework
+        // 8. Get test frameworks (collect all detected testing tools)
         const testFramework = techStack?.architecture.testing.framework ||
             scan.insights.testFramework || "Jest";
+        const testFrameworks = collectTestFrameworks(techStack || undefined, scan);
+        const testCommands = detectTestCommands(root, techStack || undefined, testFrameworks);
         // 9. Extract targeted context based on task analysis
         const targetedContext = (0, targetedContextExtractor_1.extractTargetedContext)(taskAnalysis, root, activeFilePath, activeFileContent, scan.structure.classes);
         const codeContext = (0, targetedContextExtractor_1.formatTargetedContext)(targetedContext);
@@ -91,6 +93,8 @@ class PromptEngine {
             repoContext,
             codeContext,
             testFramework,
+            testFrameworks,
+            testCommands,
             dependencyImpact
         });
         // 11. Calculate real-time quality score
@@ -127,4 +131,131 @@ class PromptEngine {
     }
 }
 exports.PromptEngine = PromptEngine;
+/**
+ * Collect all detected test frameworks from tech stack and scan results
+ */
+function collectTestFrameworks(techStack, scan) {
+    const frameworks = new Set();
+    // From tech stack architecture
+    if (techStack?.architecture.testing.framework) {
+        frameworks.add(techStack.architecture.testing.framework);
+    }
+    if (techStack?.architecture.testing.e2e) {
+        frameworks.add(techStack.architecture.testing.e2e);
+    }
+    // From scan insights
+    if (scan.insights.testFramework) {
+        frameworks.add(scan.insights.testFramework);
+    }
+    return Array.from(frameworks);
+}
+/**
+ * Detect test commands from package.json scripts or project configuration
+ */
+function detectTestCommands(root, techStack, testFrameworks) {
+    const commands = {};
+    const fs = require("fs");
+    const path = require("path");
+    // Try to detect from package.json (Node.js projects)
+    const packageJsonPath = path.join(root, "package.json");
+    if (fs.existsSync(packageJsonPath)) {
+        try {
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+            const scripts = packageJson.scripts || {};
+            // Detect unit test command
+            if (scripts.test) {
+                commands.unit = `npm test`;
+            }
+            if (scripts["test:unit"]) {
+                commands.unit = `npm run test:unit`;
+            }
+            // Detect integration test command
+            if (scripts["test:integration"]) {
+                commands.integration = `npm run test:integration`;
+            }
+            if (scripts["test:int"]) {
+                commands.integration = `npm run test:int`;
+            }
+            // Detect E2E test command
+            if (scripts["test:e2e"]) {
+                commands.e2e = `npm run test:e2e`;
+            }
+            if (scripts.e2e) {
+                commands.e2e = `npm run e2e`;
+            }
+            if (scripts.cypress) {
+                commands.e2e = `npm run cypress`;
+            }
+            if (scripts["cypress:run"]) {
+                commands.e2e = `npm run cypress:run`;
+            }
+            if (scripts.playwright) {
+                commands.e2e = `npm run playwright`;
+            }
+            // Detect all tests command
+            if (scripts["test:all"]) {
+                commands.all = `npm run test:all`;
+            }
+            if (scripts["test:ci"]) {
+                commands.all = `npm run test:ci`;
+            }
+        }
+        catch {
+            // Ignore parse errors
+        }
+    }
+    // Try to detect from Makefile (C/C++ projects)
+    const makefilePath = path.join(root, "Makefile");
+    if (fs.existsSync(makefilePath)) {
+        try {
+            const makefile = fs.readFileSync(makefilePath, "utf-8");
+            if (makefile.includes("test:") || makefile.includes("test :")) {
+                commands.unit = `make test`;
+            }
+            if (makefile.includes("check:") || makefile.includes("check :")) {
+                commands.unit = commands.unit || `make check`;
+            }
+        }
+        catch {
+            // Ignore read errors
+        }
+    }
+    // Try to detect from CMakeLists.txt (CMake projects)
+    const cmakePath = path.join(root, "CMakeLists.txt");
+    if (fs.existsSync(cmakePath)) {
+        commands.unit = commands.unit || `ctest --output-on-failure`;
+    }
+    // Detect Python test commands
+    if (techStack?.primaryLanguage?.toLowerCase().includes("python") ||
+        fs.existsSync(path.join(root, "pytest.ini")) ||
+        fs.existsSync(path.join(root, "setup.py")) ||
+        fs.existsSync(path.join(root, "pyproject.toml"))) {
+        commands.unit = commands.unit || `pytest`;
+        commands.all = commands.all || `pytest -v --cov`;
+    }
+    // Detect Robot Framework tests
+    const hasRobotTests = testFrameworks.some(f => f.toLowerCase().includes("robot")) ||
+        fs.existsSync(path.join(root, "robot.yaml")) ||
+        fs.readdirSync(root).some((f) => f.endsWith(".robot"));
+    if (hasRobotTests) {
+        commands.e2e = commands.e2e || `robot tests/`;
+    }
+    // Detect Go tests
+    if (techStack?.primaryLanguage?.toLowerCase() === "go" ||
+        fs.existsSync(path.join(root, "go.mod"))) {
+        commands.unit = `go test ./...`;
+        commands.all = `go test -v -cover ./...`;
+    }
+    // Detect Java tests (Maven/Gradle)
+    if (fs.existsSync(path.join(root, "pom.xml"))) {
+        commands.unit = `mvn test`;
+        commands.all = `mvn verify`;
+    }
+    if (fs.existsSync(path.join(root, "build.gradle")) ||
+        fs.existsSync(path.join(root, "build.gradle.kts"))) {
+        commands.unit = `gradle test`;
+        commands.all = `gradle check`;
+    }
+    return commands;
+}
 //# sourceMappingURL=engine.js.map

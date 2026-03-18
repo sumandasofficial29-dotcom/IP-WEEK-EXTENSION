@@ -18,7 +18,18 @@ export interface PromptContext {
     repoContext: string;
     codeContext: string;
     testFramework?: string;
+    testFrameworks?: string[];
+    testCommands?: TestCommands;
     dependencyImpact?: DependencyImpact;
+}
+/**
+ * Test commands for different types of tests detected in the project
+ */
+export interface TestCommands {
+    unit?: string;
+    integration?: string;
+    e2e?: string;
+    all?: string;
 }
 /**
  * Generates the complete LLM-optimized prompt

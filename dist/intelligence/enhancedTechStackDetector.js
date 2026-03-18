@@ -138,6 +138,17 @@ const FILE_EXTENSION_LANGUAGES = {
 // BUILD SYSTEM DETECTION
 // ============================================
 const BUILD_SYSTEM_SIGNATURES = {
+    // Enterprise C++ Build Systems (Amadeus-specific)
+    "BMS": {
+        files: [".bms/**"], // Only trigger on .bms directory, not generic Description.xml
+        indicators: ["bms", "bmstmp", "localbmstmp"],
+        language: "C++"
+    },
+    "CMK": {
+        files: [".cmk/**"], // Only trigger on .cmk directory
+        indicators: ["cmk", "component.xml"],
+        language: "C++"
+    },
     // C/C++ Build Systems
     "CMake": {
         files: ["CMakeLists.txt", "cmake/**/*.cmake"],
@@ -299,15 +310,6 @@ const BUILD_SYSTEM_SIGNATURES = {
         files: ["bun.lockb"],
         indicators: ["bun"],
         language: "JavaScript/TypeScript"
-    },
-    // Enterprise/Custom
-    "BMS": {
-        files: [".bms/**", "bms.xml", "bms.yaml"],
-        indicators: ["bms", "build management"],
-    },
-    "CMK": {
-        files: [".cmk/**", "cmk/**", "*.cmk"],
-        indicators: ["cmk", "deployment"],
     },
     // Mobile
     "CocoaPods": {
@@ -705,9 +707,26 @@ class EnhancedTechStackDetector {
     allDeps = [];
     depVersions = {};
     fileExtensionCounts = {};
+    sourceFileExtensionCounts = {}; // Only src/ files
     totalFiles = 0;
+    totalSourceFiles = 0;
     detectedBuildSystems = [];
     detectedTestFrameworks = [];
+    // Directories that contain data/config, not source code
+    static DATA_DIRECTORIES = new Set([
+        "regression", "regression_tests", "regression_tools", "profiles_regression",
+        "data", "test_data", "testdata", "fixtures", "mocks",
+        "profiles", "reports", "logs", "output", "results",
+        "swb_resources", "sit_application", "localbmstmp", "bmstmp",
+        "content", "distribution", "versions"
+    ]);
+    // Extensions that are config/data, not source code
+    static CONFIG_EXTENSIONS = new Set([
+        ".json", ".yaml", ".yml", ".xml", ".toml", ".ini",
+        ".env", ".properties", ".config", ".conf",
+        ".data", ".dat", ".csv", ".tsv",
+        ".lock", ".log", ".md", ".txt", ".rst"
+    ]);
     constructor(rootPath) {
         this.rootPath = rootPath;
         this.loadPackageJson();
@@ -731,15 +750,21 @@ class EnhancedTechStackDetector {
     }
     /**
      * Scan all file extensions to detect languages (works without package.json)
+     * Separates source files from data/config files for accurate language detection
      */
     scanFileExtensions() {
-        this.walkFiles((filePath) => {
+        this.walkFilesForLanguage((filePath, isSourceDir) => {
             const ext = path.extname(filePath).toLowerCase();
             if (ext) {
                 this.fileExtensionCounts[ext] = (this.fileExtensionCounts[ext] || 0) + 1;
                 this.totalFiles++;
+                // Track source files separately (in src/ and not config/data files)
+                if (isSourceDir && !EnhancedTechStackDetector.CONFIG_EXTENSIONS.has(ext)) {
+                    this.sourceFileExtensionCounts[ext] = (this.sourceFileExtensionCounts[ext] || 0) + 1;
+                    this.totalSourceFiles++;
+                }
             }
-        }, 6); // Increased depth for comprehensive scanning
+        }, 6);
     }
     analyze() {
         return {
@@ -855,27 +880,58 @@ class EnhancedTechStackDetector {
         return detected.sort((a, b) => b.confidence - a.confidence);
     }
     detectPrimaryLanguage() {
-        // Build system-based detection (highest priority)
+        // Build system-based detection (highest priority) - but VERIFY the language has files
         const buildSystems = this.detectBuildSystemsFromFiles();
         for (const system of buildSystems) {
             const sig = BUILD_SYSTEM_SIGNATURES[system];
             if (sig?.language) {
-                return sig.language;
+                // IMPORTANT: Verify the build system's language actually has files in the repo
+                // This prevents false positives (e.g., Description.xml triggering C++ in Angular repos)
+                if (this.verifyLanguageHasFiles(sig.language)) {
+                    return sig.language;
+                }
             }
         }
+        // Enterprise C++ detection (check for .bms or .cmk directories with significant C++ files)
+        // Only trigger if there are actually enough C++ source files
+        if (this.hasDirectory(".bms") || this.hasDirectory(".cmk")) {
+            const cppFileCount = (this.fileExtensionCounts[".cpp"] || 0) +
+                (this.fileExtensionCounts[".cc"] || 0) +
+                (this.fileExtensionCounts[".cxx"] || 0);
+            if (cppFileCount >= 10) { // Need substantial C++ files
+                return "C++";
+            }
+        }
+        // Use SOURCE files for language detection (not config/data)
+        // This prevents JSON/XML config files from dominating
+        const countsToUse = this.totalSourceFiles > 50
+            ? this.sourceFileExtensionCounts
+            : this.fileExtensionCounts;
         // File extension-based detection
         const languageCounts = {};
-        for (const [ext, count] of Object.entries(this.fileExtensionCounts)) {
+        for (const [ext, count] of Object.entries(countsToUse)) {
             const lang = FILE_EXTENSION_LANGUAGES[ext];
             if (lang && !lang.includes("Header") && !lang.includes("Config")) {
+                // Skip data/config extensions
+                if (EnhancedTechStackDetector.CONFIG_EXTENSIONS.has(ext))
+                    continue;
                 // Group related languages
                 let normalizedLang = lang;
                 if (lang.includes("JavaScript"))
                     normalizedLang = "JavaScript";
                 if (lang.includes("TypeScript"))
                     normalizedLang = "TypeScript";
+                if (lang === "C" || lang === "C/C++ Header")
+                    normalizedLang = "C";
+                if (lang.includes("C++"))
+                    normalizedLang = "C++";
                 languageCounts[normalizedLang] = (languageCounts[normalizedLang] || 0) + count;
             }
+        }
+        // C/C++ headers count toward C++
+        const headerCount = (countsToUse[".h"] || 0) + (countsToUse[".hpp"] || 0);
+        if (headerCount > 0 && languageCounts["C++"]) {
+            languageCounts["C++"] += Math.floor(headerCount * 0.5);
         }
         // Find the dominant language
         let maxCount = 0;
@@ -887,19 +943,26 @@ class EnhancedTechStackDetector {
             }
         }
         // TypeScript overrides JavaScript
-        if (primaryLang === "JavaScript" && this.fileExtensionCounts[".ts"]) {
-            if (this.fileExtensionCounts[".ts"] > (this.fileExtensionCounts[".js"] || 0) / 2) {
+        if (primaryLang === "JavaScript" && countsToUse[".ts"]) {
+            if (countsToUse[".ts"] > (countsToUse[".js"] || 0) / 2) {
                 return "TypeScript";
             }
         }
         return primaryLang;
     }
     detectLanguages() {
+        // Use source files for accurate language percentages
+        const countsToUse = this.totalSourceFiles > 50
+            ? this.sourceFileExtensionCounts
+            : this.fileExtensionCounts;
         const languageCounts = {};
         let total = 0;
-        for (const [ext, count] of Object.entries(this.fileExtensionCounts)) {
+        for (const [ext, count] of Object.entries(countsToUse)) {
             const lang = FILE_EXTENSION_LANGUAGES[ext];
             if (lang) {
+                // Skip config/data extensions for language percentage
+                if (EnhancedTechStackDetector.CONFIG_EXTENSIONS.has(ext))
+                    continue;
                 // Normalize language names
                 let normalizedLang = lang;
                 if (lang.includes("JavaScript"))
@@ -907,7 +970,9 @@ class EnhancedTechStackDetector {
                 if (lang.includes("TypeScript"))
                     normalizedLang = "TypeScript";
                 if (lang === "C/C++ Header")
-                    continue; // Don't count headers separately
+                    normalizedLang = "C++ Header";
+                if (lang.includes("C++") && !lang.includes("Header"))
+                    normalizedLang = "C++";
                 languageCounts[normalizedLang] = (languageCounts[normalizedLang] || 0) + count;
                 total += count;
             }
@@ -1393,6 +1458,40 @@ class EnhancedTechStackDetector {
         }, 4);
         return found;
     }
+    /**
+     * Verify that a language (from build system detection) actually has source files in the repo.
+     * This prevents false positives like Description.xml triggering C++ in an Angular repo.
+     */
+    verifyLanguageHasFiles(language) {
+        const languageExtensions = {
+            "C++": [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh"],
+            "C": [".c"],
+            "C/C++": [".c", ".cpp", ".cc", ".cxx", ".hpp"],
+            "JavaScript": [".js", ".jsx", ".mjs"],
+            "TypeScript": [".ts", ".tsx", ".mts"],
+            "JavaScript/TypeScript": [".js", ".ts", ".jsx", ".tsx"],
+            "Python": [".py"],
+            "Java": [".java"],
+            "Go": [".go"],
+            "Rust": [".rs"],
+            "Swift": [".swift"],
+            "Swift/Objective-C": [".swift", ".m", ".mm"],
+            "Ruby": [".rb"],
+            "PHP": [".php"],
+            "C#": [".cs"],
+        };
+        const extensions = languageExtensions[language];
+        if (!extensions) {
+            return true; // Unknown language, allow
+        }
+        // Check if any of the language's extensions have significant file counts
+        let fileCount = 0;
+        for (const ext of extensions) {
+            fileCount += this.fileExtensionCounts[ext] || 0;
+        }
+        // Need at least a few source files to confirm the language
+        return fileCount >= 3;
+    }
     walkFiles(callback, maxDepth = 6, dir, depth = 0) {
         if (depth >= maxDepth)
             return;
@@ -1414,6 +1513,46 @@ class EnhancedTechStackDetector {
                     }
                     else {
                         callback(fullPath);
+                    }
+                }
+                catch {
+                    // Skip
+                }
+            }
+        }
+        catch {
+            // Skip
+        }
+    }
+    /**
+     * Walk files and track whether they are in source directories vs data/config directories.
+     * This helps separate actual source code from test data, regression files, etc.
+     */
+    walkFilesForLanguage(callback, maxDepth = 6, dir, depth = 0, isInDataDir = false) {
+        if (depth >= maxDepth)
+            return;
+        const currentDir = dir || this.rootPath;
+        try {
+            const entries = fs.readdirSync(currentDir);
+            for (const entry of entries) {
+                // Skip hidden folders and common non-source directories
+                if (entry.startsWith(".") ||
+                    ["node_modules", "dist", "build", "coverage", ".git", "vendor", "__pycache__",
+                        "target", "bin", "obj", ".vs", ".idea"].includes(entry)) {
+                    continue;
+                }
+                const fullPath = path.join(currentDir, entry);
+                const entryLower = entry.toLowerCase();
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (stat.isDirectory()) {
+                        // Check if this directory is a data directory
+                        const isDataDir = isInDataDir || EnhancedTechStackDetector.DATA_DIRECTORIES.has(entryLower);
+                        this.walkFilesForLanguage(callback, maxDepth, fullPath, depth + 1, isDataDir);
+                    }
+                    else {
+                        // File is in a source directory if we're not in a data directory
+                        callback(fullPath, !isInDataDir);
                     }
                 }
                 catch {

@@ -13,6 +13,7 @@ function generateSmartPrompt(ctx) {
     const thinkingGuide = getThinkingGuide(ctx.scenario, ctx.task);
     const outputFormat = getOutputFormat(ctx.scenario, ctx.task);
     const qualityChecklist = getQualityChecklist(ctx.scenario, ctx.dependencyImpact);
+    const testVerification = getTestVerificationSection(ctx);
     let prompt = `${systemRole}
 
 ---
@@ -43,6 +44,14 @@ ${outputFormat}
 ---
 
 ${qualityChecklist}`;
+    // Add test verification section for applicable scenarios
+    if (testVerification) {
+        prompt += `
+
+---
+
+${testVerification}`;
+    }
     return prompt;
 }
 function getSystemRole(scenario, framework) {
@@ -1106,5 +1115,221 @@ Before responding, verify:
 ${checks.map(c => `- [ ] ${c}`).join("\n")}
 
 **Important:** Provide COMPLETE, WORKING code. Never use "..." or "existing code" placeholders.`;
+}
+/**
+ * Generate test verification section for scenarios that modify code
+ * This tells the LLM to include test execution steps after implementing changes
+ */
+function getTestVerificationSection(ctx) {
+    // Only applicable for scenarios that modify code
+    const testableScenarios = [
+        "bugfix", "feature", "refactor", "optimization", "migration", "security", "database"
+    ];
+    if (!testableScenarios.includes(ctx.scenario)) {
+        return null;
+    }
+    // Collect all test information
+    const testFrameworks = ctx.testFrameworks || (ctx.testFramework ? [ctx.testFramework] : []);
+    const testCommands = ctx.testCommands || {};
+    // Build the verification section
+    let section = `# Post-Implementation Verification
+
+**IMPORTANT:** After making changes, verify they work correctly by running the project's tests.
+
+## Test Execution Steps`;
+    // Add detected test commands or suggest based on framework
+    if (Object.keys(testCommands).length > 0) {
+        section += `
+
+### Detected Test Commands`;
+        if (testCommands.unit) {
+            section += `
+\`\`\`bash
+# Unit Tests
+${testCommands.unit}
+\`\`\``;
+        }
+        if (testCommands.integration) {
+            section += `
+\`\`\`bash
+# Integration Tests
+${testCommands.integration}
+\`\`\``;
+        }
+        if (testCommands.e2e) {
+            section += `
+\`\`\`bash
+# E2E / Robot Tests
+${testCommands.e2e}
+\`\`\``;
+        }
+        if (testCommands.all) {
+            section += `
+\`\`\`bash
+# Run All Tests
+${testCommands.all}
+\`\`\``;
+        }
+    }
+    else if (testFrameworks.length > 0) {
+        // Generate commands based on detected frameworks
+        section += `
+
+### Suggested Test Commands (based on detected frameworks: ${testFrameworks.join(", ")})`;
+        const frameworkCommands = getFrameworkTestCommands(testFrameworks, ctx.framework);
+        section += `
+\`\`\`bash
+${frameworkCommands.join("\n")}
+\`\`\``;
+    }
+    else {
+        // Generic guidance
+        section += `
+
+### Test Commands
+Check for test scripts in:
+- \`package.json\` → "scripts" section (npm/yarn projects)
+- \`Makefile\` → test targets (C/C++ projects)
+- \`pytest.ini\` or \`setup.py\` (Python projects)
+- \`*.robot\` files in test directories (Robot Framework)`;
+    }
+    // Add scenario-specific verification guidance
+    section += getScenarioTestGuidance(ctx.scenario);
+    // Add verification checklist
+    section += `
+
+## Verification Checklist
+After running tests:
+- [ ] All existing tests pass (no regressions)
+- [ ] New functionality is covered by tests
+- [ ] Edge cases are handled and tested
+- [ ] Error scenarios are tested`;
+    if (ctx.scenario === "bugfix") {
+        section += `
+- [ ] Added regression test that would have caught this bug`;
+    }
+    if (ctx.scenario === "security") {
+        section += `
+- [ ] Security-specific tests verify the fix
+- [ ] Penetration/fuzzing tests pass`;
+    }
+    if (ctx.scenario === "migration") {
+        section += `
+- [ ] Data integrity verified after migration
+- [ ] Rollback procedure tested`;
+    }
+    return section;
+}
+/**
+ * Get test commands based on detected frameworks
+ */
+function getFrameworkTestCommands(frameworks, projectFramework) {
+    const commands = [];
+    for (const framework of frameworks) {
+        const fw = framework.toLowerCase();
+        if (fw.includes("jest")) {
+            commands.push("npm test                    # or: npx jest");
+            commands.push("npm test -- --coverage      # with coverage report");
+        }
+        else if (fw.includes("vitest")) {
+            commands.push("npm test                    # or: npx vitest");
+            commands.push("npm run test:coverage       # with coverage");
+        }
+        else if (fw.includes("mocha")) {
+            commands.push("npm test                    # or: npx mocha");
+        }
+        else if (fw.includes("pytest") || fw.includes("python")) {
+            commands.push("pytest                      # run all tests");
+            commands.push("pytest -v                   # verbose output");
+            commands.push("pytest --cov=src            # with coverage");
+        }
+        else if (fw.includes("robot")) {
+            commands.push("robot tests/                # run robot tests");
+            commands.push("robot --outputdir results tests/");
+        }
+        else if (fw.includes("karma")) {
+            commands.push("npm test                    # karma tests");
+            commands.push("npx karma start --single-run");
+        }
+        else if (fw.includes("cypress")) {
+            commands.push("npx cypress run             # headless");
+            commands.push("npx cypress open            # interactive");
+        }
+        else if (fw.includes("playwright")) {
+            commands.push("npx playwright test");
+        }
+        else if (fw.includes("go") || projectFramework.toLowerCase().includes("go")) {
+            commands.push("go test ./...               # all tests");
+            commands.push("go test -v ./...            # verbose");
+            commands.push("go test -cover ./...        # with coverage");
+        }
+        else if (fw.includes("junit") || fw.includes("java") || projectFramework.toLowerCase().includes("java")) {
+            commands.push("mvn test                    # Maven");
+            commands.push("gradle test                 # Gradle");
+        }
+        else if (fw.includes("googletest") || fw.includes("gtest") || fw.includes("c++")) {
+            commands.push("make test                   # or cmake --build . --target test");
+            commands.push("ctest --output-on-failure");
+        }
+    }
+    // Remove duplicates
+    return [...new Set(commands)];
+}
+/**
+ * Get scenario-specific test guidance
+ */
+function getScenarioTestGuidance(scenario) {
+    const guidance = {
+        bugfix: `
+
+## Bug Fix Verification
+1. **Reproduce First:** Confirm the bug exists with a failing test
+2. **Apply Fix:** Implement the fix
+3. **Verify Fix:** Run the test - it should now pass
+4. **Regression Check:** Run full test suite to ensure no side effects`,
+        feature: `
+
+## Feature Verification
+1. **Unit Tests:** Test the new functionality in isolation
+2. **Integration Tests:** Test how it works with existing code
+3. **Edge Cases:** Test boundary conditions and error cases
+4. **Manual Smoke Test:** Quick manual verification if applicable`,
+        refactor: `
+
+## Refactoring Verification
+1. **Before Refactor:** Run all tests (save baseline)
+2. **After Refactor:** Run all tests again
+3. **Compare:** Results should be identical
+4. **No New Tests Needed:** Behavior should be unchanged`,
+        optimization: `
+
+## Performance Verification
+1. **Benchmark Before:** Record baseline performance
+2. **Apply Optimization:** Make the changes
+3. **Benchmark After:** Compare with baseline
+4. **Regression Tests:** Verify functionality unchanged`,
+        migration: `
+
+## Migration Verification
+1. **Pre-Migration Tests:** All tests pass before migration
+2. **Run Migration:** Execute migration steps
+3. **Post-Migration Tests:** All tests pass after migration
+4. **Data Validation:** Verify data integrity`,
+        security: `
+
+## Security Verification
+1. **Security Tests:** Run security-specific test suite
+2. **Vulnerability Scan:** Run security scanner if available
+3. **Regression Tests:** Ensure fix doesn't break functionality
+4. **Penetration Test:** Verify vulnerability is patched`,
+        database: `
+
+## Database Verification
+1. **Schema Tests:** Verify migrations apply cleanly
+2. **Query Tests:** Test new/modified queries
+3. **Data Integrity:** Verify constraints and relationships
+4. **Rollback Test:** Verify rollback works if needed`
+    };
+    return guidance[scenario] || "";
 }
 //# sourceMappingURL=smartPromptGenerator.js.map

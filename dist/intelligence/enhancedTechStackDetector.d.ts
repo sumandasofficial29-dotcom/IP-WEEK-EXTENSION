@@ -61,13 +61,18 @@ export declare class EnhancedTechStackDetector {
     private allDeps;
     private depVersions;
     private fileExtensionCounts;
+    private sourceFileExtensionCounts;
     private totalFiles;
+    private totalSourceFiles;
     private detectedBuildSystems;
     private detectedTestFrameworks;
+    private static DATA_DIRECTORIES;
+    private static CONFIG_EXTENSIONS;
     constructor(rootPath: string);
     private loadPackageJson;
     /**
      * Scan all file extensions to detect languages (works without package.json)
+     * Separates source files from data/config files for accurate language detection
      */
     private scanFileExtensions;
     analyze(): TechStackResult;
@@ -90,5 +95,15 @@ export declare class EnhancedTechStackDetector {
     private categorizeDependencies;
     private hasDirectory;
     private hasFilesMatching;
+    /**
+     * Verify that a language (from build system detection) actually has source files in the repo.
+     * This prevents false positives like Description.xml triggering C++ in an Angular repo.
+     */
+    private verifyLanguageHasFiles;
     private walkFiles;
+    /**
+     * Walk files and track whether they are in source directories vs data/config directories.
+     * This helps separate actual source code from test data, regression files, etc.
+     */
+    private walkFilesForLanguage;
 }

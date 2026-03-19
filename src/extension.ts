@@ -3,11 +3,13 @@ import { SidebarProvider } from "./ui/sidebarProvider";
 import { cacheManager } from "./intelligence/cacheManager";
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('PromptCraft is now active!');
+  try {
+    console.log('PromptCraft is now active!');
+    vscode.window.showInformationMessage('PromptCraft activating...');
 
-  // Initialize cache manager with extension context for persistence
-  cacheManager.initialize(context);
-  console.log('PromptCraft Cache initialized');
+    // Initialize cache manager with extension context for persistence
+    cacheManager.initialize(context);
+    console.log('PromptCraft Cache initialized');
   
   const sidebarProvider = new SidebarProvider(context.extensionUri);
 
@@ -73,6 +75,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(generateCommand, cacheStatsCommand, clearCacheCommand);
   
   console.log('PromptCraft sidebar and cache commands registered');
+  vscode.window.showInformationMessage('PromptCraft activated successfully!');
+  } catch (error) {
+    console.error('PromptCraft activation failed:', error);
+    vscode.window.showErrorMessage(`PromptCraft failed to activate: ${error}`);
+  }
 }
 
 export function deactivate() {

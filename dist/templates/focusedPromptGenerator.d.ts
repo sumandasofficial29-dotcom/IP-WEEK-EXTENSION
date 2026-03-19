@@ -41,6 +41,7 @@ export interface FocusedPromptOutput {
         hasTestInstructions: boolean;
         hasRepoContext?: boolean;
         hasDependencyAnalysis?: boolean;
+        hasCompanyGuidelines?: boolean;
     };
 }
 export interface PromptSection {

@@ -2,6 +2,7 @@ import { AnalyzedTask } from "../intelligence/taskAnalyzer";
 import { TestingConfig, readProjectConfig, readTestingConfig } from "../intelligence/projectConfigReader";
 import { DependencyImpact } from "../intelligence/dependencyImpactAnalyzer";
 import { TestCommands } from "./smartPromptGenerator";
+import { getCompanyGuidelines, hasCompanyGuidelines } from "../intelligence/companyGuidelines";
 
 /**
  * Focused Prompt Generator v2 - COMBINED MODE
@@ -46,6 +47,7 @@ export interface FocusedPromptOutput {
     hasTestInstructions: boolean;
     hasRepoContext?: boolean;
     hasDependencyAnalysis?: boolean;
+    hasCompanyGuidelines?: boolean;
   };
 }
 
@@ -122,14 +124,28 @@ export function generateFocusedPrompt(input: FocusedPromptInput): FocusedPromptO
   if (projectConfig.copilotInstructions) {
     sections.push({
       id: "instructions",
-      title: "Project Instructions",
-      content: projectConfig.copilotInstructions,
+      title: "Project Coding Guidelines",
+      content: `## Project Coding Guidelines\nFollow these project-specific rules:\n\n${projectConfig.copilotInstructions}`,
       required: false,
       editable: true
     });
   }
 
-  // Section 7: Additional Context from user (if provided)
+  // Section 7: Company/Language-Specific Guidelines (if available)
+  if (hasCompanyGuidelines(input.primaryLanguage)) {
+    const guidelines = getCompanyGuidelines(input.primaryLanguage);
+    if (guidelines) {
+      sections.push({
+        id: "companyGuidelines",
+        title: "Company Coding Standards",
+        content: guidelines,
+        required: false,
+        editable: true
+      });
+    }
+  }
+
+  // Section 8: Additional Context from user (if provided)
   if (input.options?.additionalContext) {
     sections.push({
       id: "additionalContext",
@@ -140,7 +156,7 @@ export function generateFocusedPrompt(input: FocusedPromptInput): FocusedPromptO
     });
   }
 
-  // Section 8: Requirements - what we expect from the output
+  // Section 9: Requirements - what we expect from the output
   sections.push({
     id: "requirements",
     title: "Requirements",
@@ -149,7 +165,7 @@ export function generateFocusedPrompt(input: FocusedPromptInput): FocusedPromptO
     editable: true
   });
 
-  // Section 9: Quality Checklist - FROM CLASSIC MODE
+  // Section 10: Quality Checklist - FROM CLASSIC MODE
   sections.push({
     id: "quality",
     title: "Quality Checklist",
@@ -173,7 +189,8 @@ export function generateFocusedPrompt(input: FocusedPromptInput): FocusedPromptO
       hasProjectInstructions: !!projectConfig.copilotInstructions,
       hasTestInstructions: testingConfig.commands.length > 0,
       hasRepoContext: !!input.repoContext,
-      hasDependencyAnalysis: !!(input.dependencyImpact && input.dependencyImpact.dependentFiles.length > 0)
+      hasDependencyAnalysis: !!(input.dependencyImpact && input.dependencyImpact.dependentFiles.length > 0),
+      hasCompanyGuidelines: hasCompanyGuidelines(input.primaryLanguage)
     }
   };
 }

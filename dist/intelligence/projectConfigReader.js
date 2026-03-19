@@ -83,11 +83,9 @@ function readProjectConfig(rootPath) {
     for (const p of copilotPaths) {
         if (fs.existsSync(p)) {
             try {
-                config.copilotInstructions = fs.readFileSync(p, "utf-8").trim();
-                // Limit size to avoid token bloat
-                if (config.copilotInstructions.length > 3000) {
-                    config.copilotInstructions = config.copilotInstructions.substring(0, 3000) + "\n... (truncated)";
-                }
+                const rawContent = fs.readFileSync(p, "utf-8").trim();
+                // Extract relevant coding guidelines instead of dumping raw content
+                config.copilotInstructions = extractRelevantCopilotInstructions(rawContent);
                 break;
             }
             catch { /* skip */ }
@@ -423,6 +421,94 @@ function extractRelevantContributingSections(content) {
     }
     const result = relevantLines.join("\n").trim();
     return result.length > 800 ? result.substring(0, 800) + "\n... (truncated)" : result;
+}
+/**
+ * Extract relevant coding guidelines from copilot-instructions.md
+ * Focuses on actionable rules: naming, logging, error handling, style, versions
+ */
+function extractRelevantCopilotInstructions(content) {
+    const lines = content.split("\n");
+    const extractedGuidelines = [];
+    let inRelevantSection = false;
+    let currentSectionLines = [];
+    let currentHeading = "";
+    // Key sections we care about for coding guidelines
+    const relevantHeadings = [
+        /^#+\s*(naming|convention|variable|function|class|method)/i,
+        /^#+\s*(logging|log|debug|trace)/i,
+        /^#+\s*(error|exception|handling)/i,
+        /^#+\s*(version|dependency|dependencies|require)/i,
+        /^#+\s*(style|format|formatting|code style)/i,
+        /^#+\s*(comment|documentation|doc|jsdoc|javadoc)/i,
+        /^#+\s*(testing|test|unit test|coverage)/i,
+        /^#+\s*(import|export|module)/i,
+        /^#+\s*(security|auth|validation)/i,
+        /^#+\s*(pattern|architecture|structure)/i,
+        /^#+\s*(do not|don't|avoid|never|always|must|should|prefer)/i
+    ];
+    // Skip generic boilerplate sections
+    const skipHeadings = [
+        /^#+\s*(introduction|overview|about|welcome|getting started)/i,
+        /^#+\s*(table of contents|toc|contents)/i,
+        /^#+\s*(license|copyright|credits)/i,
+        /^#+\s*(installation|setup|prerequisites)/i
+    ];
+    for (const line of lines) {
+        const isHeading = line.startsWith("#");
+        if (isHeading) {
+            // Save previous section if relevant and non-empty
+            if (inRelevantSection && currentSectionLines.length > 0) {
+                const sectionContent = currentSectionLines.join("\n").trim();
+                if (sectionContent.length > 10) { // Skip near-empty sections
+                    extractedGuidelines.push(`${currentHeading}\n${sectionContent}`);
+                }
+            }
+            // Check if new section is relevant
+            const isRelevant = relevantHeadings.some(r => r.test(line));
+            const shouldSkip = skipHeadings.some(r => r.test(line));
+            inRelevantSection = isRelevant && !shouldSkip;
+            currentHeading = line;
+            currentSectionLines = [];
+        }
+        else if (inRelevantSection) {
+            // Skip empty lines at start of section
+            if (currentSectionLines.length === 0 && line.trim() === "") {
+                continue;
+            }
+            // Limit lines per section to avoid bloat
+            if (currentSectionLines.length < 25) {
+                currentSectionLines.push(line);
+            }
+        }
+    }
+    // Don't forget the last section
+    if (inRelevantSection && currentSectionLines.length > 0) {
+        const sectionContent = currentSectionLines.join("\n").trim();
+        if (sectionContent.length > 10) {
+            extractedGuidelines.push(`${currentHeading}\n${sectionContent}`);
+        }
+    }
+    // If no relevant sections found, try to extract key bullet points from the whole document
+    if (extractedGuidelines.length === 0) {
+        const keyPatterns = [
+            /^[-*]\s*(use|prefer|always|never|avoid|must|should)/i,
+            /^[-*]\s*(name|log|error|format|comment)/i,
+            /^\d+\.\s*(use|prefer|always|never|avoid|must|should)/i
+        ];
+        for (const line of lines) {
+            if (keyPatterns.some(p => p.test(line.trim()))) {
+                extractedGuidelines.push(line.trim());
+                if (extractedGuidelines.length >= 20)
+                    break; // Limit to 20 key bullets
+            }
+        }
+    }
+    const result = extractedGuidelines.join("\n\n").trim();
+    // Return with size limit
+    if (result.length > 1500) {
+        return result.substring(0, 1500) + "\n... (truncated)";
+    }
+    return result || content.substring(0, 800) + "\n... (using raw content, no specific guidelines found)";
 }
 /**
  * Extract test instructions from test README

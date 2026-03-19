@@ -4,6 +4,7 @@ exports.generateFocusedPrompt = generateFocusedPrompt;
 exports.generateCustomPrompt = generateCustomPrompt;
 exports.getDefaultOptions = getDefaultOptions;
 const projectConfigReader_1 = require("../intelligence/projectConfigReader");
+const companyGuidelines_1 = require("../intelligence/companyGuidelines");
 /**
  * Generate a focused, value-adding prompt with FULL repo context
  * Combines classic mode's rich context with focused mode's clarity
@@ -62,13 +63,26 @@ function generateFocusedPrompt(input) {
     if (projectConfig.copilotInstructions) {
         sections.push({
             id: "instructions",
-            title: "Project Instructions",
-            content: projectConfig.copilotInstructions,
+            title: "Project Coding Guidelines",
+            content: `## Project Coding Guidelines\nFollow these project-specific rules:\n\n${projectConfig.copilotInstructions}`,
             required: false,
             editable: true
         });
     }
-    // Section 7: Additional Context from user (if provided)
+    // Section 7: Company/Language-Specific Guidelines (if available)
+    if ((0, companyGuidelines_1.hasCompanyGuidelines)(input.primaryLanguage)) {
+        const guidelines = (0, companyGuidelines_1.getCompanyGuidelines)(input.primaryLanguage);
+        if (guidelines) {
+            sections.push({
+                id: "companyGuidelines",
+                title: "Company Coding Standards",
+                content: guidelines,
+                required: false,
+                editable: true
+            });
+        }
+    }
+    // Section 8: Additional Context from user (if provided)
     if (input.options?.additionalContext) {
         sections.push({
             id: "additionalContext",
@@ -78,7 +92,7 @@ function generateFocusedPrompt(input) {
             editable: true
         });
     }
-    // Section 8: Requirements - what we expect from the output
+    // Section 9: Requirements - what we expect from the output
     sections.push({
         id: "requirements",
         title: "Requirements",
@@ -86,7 +100,7 @@ function generateFocusedPrompt(input) {
         required: true,
         editable: true
     });
-    // Section 9: Quality Checklist - FROM CLASSIC MODE
+    // Section 10: Quality Checklist - FROM CLASSIC MODE
     sections.push({
         id: "quality",
         title: "Quality Checklist",
@@ -108,7 +122,8 @@ function generateFocusedPrompt(input) {
             hasProjectInstructions: !!projectConfig.copilotInstructions,
             hasTestInstructions: testingConfig.commands.length > 0,
             hasRepoContext: !!input.repoContext,
-            hasDependencyAnalysis: !!(input.dependencyImpact && input.dependencyImpact.dependentFiles.length > 0)
+            hasDependencyAnalysis: !!(input.dependencyImpact && input.dependencyImpact.dependentFiles.length > 0),
+            hasCompanyGuidelines: (0, companyGuidelines_1.hasCompanyGuidelines)(input.primaryLanguage)
         }
     };
 }

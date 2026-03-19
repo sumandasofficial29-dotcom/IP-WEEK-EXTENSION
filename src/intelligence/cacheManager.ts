@@ -467,10 +467,11 @@ export class CacheManager {
   /**
    * Warm up cache for a repository (call on extension activation)
    */
-  async warmUp(rootPath: string): Promise<void> {
+  async warmUp(_rootPath: string): Promise<void> {
     // This can be called to pre-populate cache
     // The actual scanning will be done by the engine
-    console.log(`[PromptCraft Cache] Warming up cache for: ${rootPath}`);
+    // Note: Not logging rootPath for security (avoid leaking directory structure)
+    console.log('[PromptCraft Cache] Warming up cache for workspace');
   }
 }
 

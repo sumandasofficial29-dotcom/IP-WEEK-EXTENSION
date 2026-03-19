@@ -241,17 +241,3 @@ export function buildCompactStructure(rootPath: string): string {
 
   return builder.build(rootPath);
 }
-
-/**
- * Creates a detailed structure for deep analysis
- */
-export function buildDetailedStructure(rootPath: string): string {
-  const builder = new FileStructureBuilder({
-    maxDepth: 5,
-    maxItemsPerLevel: 20,
-    showFileCount: true,
-    prioritizeFolders: true
-  });
-
-  return builder.build(rootPath);
-}

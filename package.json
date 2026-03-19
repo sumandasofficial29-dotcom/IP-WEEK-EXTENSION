@@ -22,7 +22,7 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onView:repoPrompt.sidebar"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -70,12 +70,12 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
-    "glob": "^10.3.10",
-    "typescript": "^5.4.5"
+    "glob": "^10.3.10"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5",
     "ts-node": "^10.9.2",
     "rimraf": "^5.0.5",
     "eslint": "^8.57.0",

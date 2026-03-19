@@ -159,6 +159,6 @@ export declare class CacheManager {
     /**
      * Warm up cache for a repository (call on extension activation)
      */
-    warmUp(rootPath: string): Promise<void>;
+    warmUp(_rootPath: string): Promise<void>;
 }
 export declare const cacheManager: CacheManager;

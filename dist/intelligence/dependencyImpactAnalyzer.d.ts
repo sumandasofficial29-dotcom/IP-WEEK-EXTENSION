@@ -34,7 +34,3 @@ export interface ExposedExport {
  * Analyzes the impact of changing a file
  */
 export declare function analyzeDependencyImpact(targetFilePath: string, projectRoot: string): DependencyImpact;
-/**
- * Quick check to get list of files that import from a given file
- */
-export declare function getFilesImportingFrom(targetFilePath: string, projectRoot: string): string[];

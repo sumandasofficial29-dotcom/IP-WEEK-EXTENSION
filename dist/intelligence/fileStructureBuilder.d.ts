@@ -19,7 +19,3 @@ export declare class FileStructureBuilder {
  * Creates a compact structure summary for LLM context
  */
 export declare function buildCompactStructure(rootPath: string): string;
-/**
- * Creates a detailed structure for deep analysis
- */
-export declare function buildDetailedStructure(rootPath: string): string;

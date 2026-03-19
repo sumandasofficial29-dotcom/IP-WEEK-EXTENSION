@@ -8,6 +8,12 @@ import { analyzeTask, AnalyzedTask } from "../intelligence/taskAnalyzer";
 import { extractTargetedContext, formatTargetedContext } from "../intelligence/targetedContextExtractor";
 import { generateSmartPrompt, TestCommands } from "../templates/smartPromptGenerator";
 import { analyzeDependencyImpact, DependencyImpact } from "../intelligence/dependencyImpactAnalyzer";
+import { 
+  generateFocusedPrompt, 
+  generateCustomPrompt, 
+  getDefaultOptions, 
+  PromptOptions 
+} from "../templates/focusedPromptGenerator";
 
 export interface PromptResult {
   prompt: string;
@@ -17,6 +23,26 @@ export interface PromptResult {
   taskAnalysis: AnalyzedTask;
   inputIssues: { type: string; message: string }[];
   suggestions: string[];
+}
+
+export interface FocusedPromptResult {
+  prompt: string;
+  sections: Array<{
+    id: string;
+    title: string;
+    content: string;
+    required: boolean;
+    editable: boolean;
+  }>;
+  taskAnalysis: AnalyzedTask;
+  options: PromptOptions;
+  metadata: {
+    estimatedTokens: number;
+    hasProjectInstructions: boolean;
+    hasTestInstructions: boolean;
+    primaryLanguage: string;
+    frameworks: string[];
+  };
 }
 
 export class PromptEngine {
@@ -124,6 +150,133 @@ export class PromptEngine {
   async generateSimple(root: string, userInput: string): Promise<string> {
     const result = await this.generate(root, userInput);
     return result.prompt;
+  }
+
+  /**
+   * NEW: Generate combined prompt with all features
+   * Combines classic mode's rich context with focused mode's options
+   */
+  async generateFocused(root: string, userInput: string, customOptions?: Partial<PromptOptions>): Promise<FocusedPromptResult> {
+    // 1. Get active editor file info
+    const activeEditor = vscode.window.activeTextEditor;
+    const activeFilePath = activeEditor?.document.uri.fsPath;
+    const activeFileContent = activeEditor?.document.getText();
+
+    // 2. Deep task analysis
+    const taskAnalysis = analyzeTask(userInput, activeFilePath);
+
+    // 3. Full repo scan (includes folder structure, tech stack, everything)
+    const scan = await this.scanner.scan(root);
+
+    // 4. Detect scenario from user input
+    const scenario = this.resolver.resolve(userInput);
+
+    // 5. Get repo context summary (tech stack, dependencies, folder structure)
+    const repoContext = this.compressor.compress(scan);
+    const techStack = this.compressor.getTechStack();
+
+    // 6. Detect framework
+    const framework = techStack?.frameworks[0]?.name || 
+      (scan.insights.hasAngular ? "Angular" : 
+       scan.insights.hasReact ? "React" : 
+       techStack?.primaryLanguage || "TypeScript");
+
+    // 7. Get test frameworks
+    const testFramework = techStack?.architecture.testing.framework || 
+      scan.insights.testFramework || "Jest";
+    const testFrameworks = collectTestFrameworks(techStack || undefined, scan);
+    const testCommands = detectTestCommands(root, techStack || undefined, testFrameworks);
+
+    // 8. Extract targeted context based on task analysis
+    const targetedContext = extractTargetedContext(
+      taskAnalysis,
+      root,
+      activeFilePath,
+      activeFileContent,
+      scan.structure.classes
+    );
+    const codeContext = formatTargetedContext(targetedContext);
+
+    // 9. Analyze dependency impact
+    let dependencyImpact: DependencyImpact | undefined;
+    if (activeFilePath && ["modify", "refactor", "fix", "delete"].includes(taskAnalysis.action)) {
+      dependencyImpact = analyzeDependencyImpact(activeFilePath, root);
+    }
+
+    // 10. Detect primary language and frameworks
+    const primaryLanguage = techStack?.primaryLanguage || "Unknown";
+    const frameworks = techStack?.frameworks.map(f => f.name) || [];
+
+    // 11. Get default options, override with custom
+    const defaultOpts = getDefaultOptions(taskAnalysis);
+    const options: PromptOptions = { ...defaultOpts, ...customOptions };
+
+    // 12. Generate COMBINED prompt (classic context + focused options)
+    const result = generateFocusedPrompt({
+      userRequest: userInput,
+      task: taskAnalysis,
+      rootPath: root,
+      activeFilePath,
+      activeFileContent,
+      primaryLanguage,
+      frameworks,
+      // Pass classic mode context
+      repoContext,
+      codeContext,
+      scenario,
+      framework,
+      testFramework,
+      testFrameworks,
+      testCommands,
+      dependencyImpact,
+      options
+    });
+
+    return {
+      prompt: result.prompt,
+      sections: result.sections,
+      taskAnalysis,
+      options,
+      metadata: {
+        ...result.metadata,
+        primaryLanguage,
+        frameworks
+      }
+    };
+  }
+
+  /**
+   * Generate custom prompt with user-specified options
+   */
+  async generateWithOptions(
+    root: string, 
+    userInput: string, 
+    options: PromptOptions,
+    additionalContext?: string
+  ): Promise<string> {
+    const activeEditor = vscode.window.activeTextEditor;
+    const activeFilePath = activeEditor?.document.uri.fsPath;
+    const activeFileContent = activeEditor?.document.getText();
+    
+    const taskAnalysis = analyzeTask(userInput, activeFilePath);
+    const scan = await this.scanner.scan(root);
+    const techStack = this.compressor.compress(scan) ? this.compressor.getTechStack() : null;
+    
+    const primaryLanguage = techStack?.primaryLanguage || "Unknown";
+    const frameworks = techStack?.frameworks.map(f => f.name) || [];
+
+    return generateCustomPrompt({
+      userRequest: userInput,
+      task: taskAnalysis,
+      rootPath: root,
+      activeFilePath,
+      activeFileContent,
+      primaryLanguage,
+      frameworks
+    }, {
+      ...options,
+      additionalContext
+    });
   }
 }
 

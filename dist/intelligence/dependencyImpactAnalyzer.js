@@ -40,7 +40,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.analyzeDependencyImpact = analyzeDependencyImpact;
-exports.getFilesImportingFrom = getFilesImportingFrom;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 /**
@@ -355,41 +354,5 @@ function generateImpactSummary(dependents, imports, exports, impactLevel, warnin
         lines.push(`- Impact is ${impactLevel} - proceed with normal care`);
     }
     return lines.join("\n");
-}
-/**
- * Quick check to get list of files that import from a given file
- */
-function getFilesImportingFrom(targetFilePath, projectRoot) {
-    const targetName = path.basename(targetFilePath, path.extname(targetFilePath));
-    const files = [];
-    const searchDirs = ["src", "lib", "app"];
-    for (const dir of searchDirs) {
-        const fullDir = path.join(projectRoot, dir);
-        findFilesWithImport(fullDir, targetName, files);
-    }
-    return files;
-}
-function findFilesWithImport(dir, targetName, results) {
-    try {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") {
-                continue;
-            }
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                findFilesWithImport(fullPath, targetName, results);
-            }
-            else if ((entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) && results.length < 50) {
-                const content = readFileSafe(fullPath);
-                if (content && content.includes(targetName)) {
-                    results.push(entry.name);
-                }
-            }
-        }
-    }
-    catch {
-        // Skip
-    }
 }
 //# sourceMappingURL=dependencyImpactAnalyzer.js.map

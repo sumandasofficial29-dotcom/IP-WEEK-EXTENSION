@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { PromptEngine } from "../core/engine";
+import { PromptOptions } from "../templates/focusedPromptGenerator";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private engine = new PromptEngine();
@@ -12,21 +13,57 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri]
     };
 
-    webviewView.webview.html = this.getHtml();
+    // Generate nonce for Content Security Policy
+    const nonce = this.getNonce();
+    webviewView.webview.html = this.getHtml(nonce);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (message.command === "generate") {
-        const workspace = vscode.workspace.workspaceFolders?.[0];
+      const workspace = vscode.workspace.workspaceFolders?.[0];
 
-        if (!workspace) {
-          vscode.window.showErrorMessage("No workspace open.");
-          return;
-        }
+      if (!workspace) {
+        vscode.window.showErrorMessage("No workspace open.");
+        webviewView.webview.postMessage({ command: "error", message: "No workspace open." });
+        return;
+      }
 
+      const root = workspace.uri.fsPath;
+
+      // Handle FOCUSED mode generation (new approach)
+      if (message.command === "generateFocused") {
         try {
           webviewView.webview.postMessage({ command: "loading" });
 
-          const root = workspace.uri.fsPath;
+          const options: Partial<PromptOptions> = {
+            includeExplanation: message.options?.includeExplanation ?? true,
+            includeDocumentation: message.options?.includeDocumentation ?? false,
+            includeTests: message.options?.includeTests ?? false,
+            includeProjectInstructions: message.options?.includeProjectInstructions ?? true,
+            additionalContext: message.options?.additionalContext
+          };
+
+          const result = await this.engine.generateFocused(root, message.text, options);
+
+          webviewView.webview.postMessage({
+            command: "focusedResult",
+            content: result.prompt,
+            sections: result.sections,
+            metadata: result.metadata,
+            options: result.options,
+            taskAction: result.taskAnalysis.action
+          });
+        } catch (error) {
+          webviewView.webview.postMessage({
+            command: "error",
+            message: String(error)
+          });
+        }
+      }
+
+      // Handle CLASSIC mode generation (old approach)
+      if (message.command === "generate") {
+        try {
+          webviewView.webview.postMessage({ command: "loading" });
+
           const result = await this.engine.generate(root, message.text);
 
           webviewView.webview.postMessage({
@@ -46,6 +83,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
       }
 
+      // Handle regenerate with custom options
+      if (message.command === "regenerateWithOptions") {
+        try {
+          webviewView.webview.postMessage({ command: "loading" });
+
+          const prompt = await this.engine.generateWithOptions(
+            root,
+            message.text,
+            message.options,
+            message.additionalContext
+          );
+
+          webviewView.webview.postMessage({
+            command: "customResult",
+            content: prompt
+          });
+        } catch (error) {
+          webviewView.webview.postMessage({
+            command: "error",
+            message: String(error)
+          });
+        }
+      }
+
       if (message.command === "copy") {
         await vscode.env.clipboard.writeText(message.text);
         vscode.window.showInformationMessage("Copied to clipboard!");
@@ -56,41 +117,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         await vscode.env.clipboard.writeText(prompt);
         
         try {
-          // Try to open Copilot Chat with the prompt pre-filled
-          // VS Code 1.83+ supports passing query to chat commands
           let sent = false;
           
-          // Method 1: Open chat with query parameter (VS Code 1.83+)
           try {
             await vscode.commands.executeCommand("workbench.action.chat.open", {
               query: prompt,
               isPartialQuery: false
             });
             sent = true;
-          } catch {
-            // Fallback methods
-          }
+          } catch { /* fallback */ }
           
           if (!sent) {
-            // Method 2: Try opening panel chat with query
             try {
               await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
-              // Small delay then try to insert text
               setTimeout(async () => {
                 try {
                   await vscode.commands.executeCommand("workbench.action.chat.insertIntoInput", prompt);
-                } catch {
-                  // Clipboard fallback already done
-                }
+                } catch { /* clipboard fallback already done */ }
               }, 200);
               sent = true;
-            } catch {
-              // Continue to next method
-            }
+            } catch { /* continue */ }
           }
           
           if (!sent) {
-            // Method 3: Just open any available chat
             const fallbackCommands = [
               "github.copilot.chat.focus",
               "workbench.action.chat.openInEditor"
@@ -100,9 +149,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 await vscode.commands.executeCommand(cmd);
                 sent = true;
                 break;
-              } catch {
-                continue;
-              }
+              } catch { continue; }
             }
           }
           
@@ -111,18 +158,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           } else {
             vscode.window.showInformationMessage("Prompt copied! Press Ctrl+Shift+I to open Copilot Chat, then Ctrl+V.");
           }
-        } catch (err) {
+        } catch {
           vscode.window.showInformationMessage("Prompt copied! Open Copilot Chat and paste with Ctrl+V.");
         }
       }
     });
   }
 
-  private getHtml(): string {
+  /**
+   * Generate cryptographically secure nonce for CSP
+   */
+  private getNonce(): string {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+  }
+
+  private getHtml(nonce: string): string {
     return `
 <!DOCTYPE html>
 <html>
 <head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -132,17 +192,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     h3 {
       font-size: 14px;
-      margin-bottom: 4px;
+      margin-bottom: 10px;
       color: var(--vscode-foreground);
     }
-    .subtitle {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      margin-bottom: 12px;
-    }
+    
+    /* Input */
     textarea {
       width: 100%;
-      min-height: 100px;
+      min-height: 80px;
       padding: 10px;
       border: 1px solid var(--vscode-input-border);
       background: var(--vscode-input-background);
@@ -156,19 +213,61 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     textarea:focus {
       outline: 1px solid var(--vscode-focusBorder);
     }
-    textarea::placeholder {
-      color: var(--vscode-input-placeholderForeground);
+    
+    /* Options */
+    .options-section {
+      margin-top: 10px;
+      padding: 10px;
+      background: var(--vscode-textBlockQuote-background);
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border);
     }
+    .options-title {
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--vscode-foreground);
+    }
+    .option-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+    .option-row input[type="checkbox"] {
+      margin: 0;
+    }
+    .option-row label {
+      cursor: pointer;
+      color: var(--vscode-foreground);
+    }
+    
+    /* Additional Context */
+    .additional-context {
+      margin-top: 10px;
+    }
+    .additional-context textarea {
+      min-height: 50px;
+      font-size: 11px;
+    }
+    .additional-context-label {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 4px;
+      display: block;
+    }
+    
+    /* Buttons */
     .btn {
       width: 100%;
       padding: 10px;
-      margin-top: 8px;
+      margin-top: 10px;
       border: none;
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
       font-weight: 500;
-      transition: opacity 0.2s;
     }
     .btn-primary {
       background: var(--vscode-button-background);
@@ -181,19 +280,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
     }
-    .btn-secondary:hover {
-      background: var(--vscode-button-secondaryHoverBackground);
-    }
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
+    
+    /* Output */
     .output-section {
       margin-top: 12px;
     }
     #output {
       width: 100%;
-      min-height: 150px;
+      min-height: 120px;
+      max-height: 400px;
       padding: 10px;
       border: 1px solid var(--vscode-input-border);
       background: var(--vscode-textBlockQuote-background);
@@ -204,9 +303,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       white-space: pre-wrap;
       word-wrap: break-word;
       overflow-y: auto;
-      max-height: 400px;
       line-height: 1.5;
     }
+    
+    /* Editable output */
+    #editableOutput {
+      width: 100%;
+      min-height: 200px;
+      max-height: 400px;
+      padding: 10px;
+      border: 1px solid var(--vscode-focusBorder);
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    
+    /* Actions */
     .actions {
       display: flex;
       gap: 8px;
@@ -216,336 +332,301 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       flex: 1;
       margin-top: 0;
     }
-    .quality-section {
-      margin-top: 10px;
-      padding: 10px;
-      border-radius: 4px;
+    
+    /* Metadata */
+    .metadata {
+      margin-top: 8px;
+      padding: 8px;
       background: var(--vscode-textBlockQuote-background);
-      border: 1px solid var(--vscode-input-border);
-    }
-    .quality-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 6px;
-    }
-    .quality-score {
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .quality-score.high { color: #4caf50; }
-    .quality-score.medium { color: #ff9800; }
-    .quality-score.low { color: #f44336; }
-    .quality-bar {
-      width: 100%;
-      height: 4px;
-      background: var(--vscode-progressBar-background);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-bottom: 8px;
-    }
-    .quality-bar-fill {
-      height: 100%;
-      transition: width 0.3s ease;
-    }
-    .quality-bar-fill.high { background: #4caf50; }
-    .quality-bar-fill.medium { background: #ff9800; }
-    .quality-bar-fill.low { background: #f44336; }
-    .quality-explanation {
+      border-radius: 4px;
       font-size: 10px;
       color: var(--vscode-descriptionForeground);
     }
-    .suggestions {
-      margin-top: 8px;
-      font-size: 10px;
-    }
-    .suggestion-item {
+    .metadata-row {
       display: flex;
-      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .meta-item {
+      display: flex;
       gap: 4px;
-      margin-top: 4px;
-      color: var(--vscode-textLink-foreground);
     }
-    .suggestion-item::before {
-      content: "💡";
-      font-size: 10px;
-    }
-    .quality-dimensions {
-      margin-top: 8px;
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 6px;
-    }
-    .dimension {
-      padding: 6px;
-      border-radius: 4px;
-      background: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-input-border);
-    }
-    .dimension-header {
+    .meta-value { font-weight: 500; }
+    .meta-value.good { color: #4caf50; }
+    
+    /* Edit Toggle */
+    .edit-toggle {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 9px;
+      margin-bottom: 8px;
     }
-    .dimension-name {
+    .edit-toggle-label {
+      font-size: 11px;
       font-weight: 500;
-      color: var(--vscode-foreground);
     }
-    .dimension-score {
-      font-weight: 600;
-    }
-    .dimension-score.excellent { color: #4caf50; }
-    .dimension-score.good { color: #8bc34a; }
-    .dimension-score.fair { color: #ff9800; }
-    .dimension-score.poor { color: #f44336; }
-    .dimension-bar {
-      height: 2px;
-      margin-top: 3px;
-      background: var(--vscode-progressBar-background);
-      border-radius: 1px;
-      overflow: hidden;
-    }
-    .dimension-bar-fill {
-      height: 100%;
-    }
-    .dimension-bar-fill.excellent { background: #4caf50; }
-    .dimension-bar-fill.good { background: #8bc34a; }
-    .dimension-bar-fill.fair { background: #ff9800; }
-    .dimension-bar-fill.poor { background: #f44336; }
-    .likelihood-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 10px;
+    .edit-btn {
+      padding: 4px 8px;
       font-size: 10px;
-      font-weight: 600;
-      margin-left: 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
     }
-    .likelihood-badge.High {
-      background: #1b5e20;
-      color: #a5d6a7;
-    }
-    .likelihood-badge.Medium {
-      background: #e65100;
-      color: #ffcc80;
-    }
-    .likelihood-badge.Low {
-      background: #b71c1c;
-      color: #ef9a9a;
-    }
+    
+    /* Loading */
     .loading {
       color: var(--vscode-textLink-foreground);
       font-style: italic;
+      padding: 20px;
+      text-align: center;
     }
-    .loading-spinner {
-      display: inline-block;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
-    }
+    
+    /* Error */
     .error {
       color: var(--vscode-errorForeground);
+      padding: 10px;
     }
+    
     .hidden { display: none; }
+    
+    /* Tip */
     .tip {
       font-size: 10px;
       color: var(--vscode-descriptionForeground);
-      margin-top: 6px;
+      margin-top: 8px;
       padding: 6px;
       background: var(--vscode-textBlockQuote-background);
       border-radius: 4px;
       border-left: 2px solid var(--vscode-textLink-foreground);
-    }
-    .stats {
-      display: flex;
-      gap: 12px;
-      margin-top: 8px;
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground);
-    }
-    .stat-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
     }
   </style>
 </head>
 <body>
   <h3>✨ PromptCraft</h3>
   
-  <textarea id="input" placeholder="Describe what you want to do..."></textarea>
+  <!-- Input -->
+  <textarea id="input" placeholder="What do you want to do? e.g., 'fix the login bug' or 'add user authentication'"></textarea>
   
-  <div class="tip" id="tip">
-    💡 <strong>Tip:</strong> Be specific about the component, file, or functionality you're working with.
+  <!-- Options -->
+  <div class="options-section">
+    <div class="options-title">⚙️ Prompt Options</div>
+    
+    <div class="option-row">
+      <input type="checkbox" id="optExplanation" checked>
+      <label for="optExplanation">Request step-by-step explanation</label>
+    </div>
+    
+    <div class="option-row">
+      <input type="checkbox" id="optDocumentation">
+      <label for="optDocumentation">Generate documentation</label>
+    </div>
+    
+    <div class="option-row">
+      <input type="checkbox" id="optTests">
+      <label for="optTests">Include unit tests</label>
+    </div>
+    
+    <div class="option-row">
+      <input type="checkbox" id="optProjectInstructions" checked>
+      <label for="optProjectInstructions">Use project instructions (if available)</label>
+    </div>
+    
+    <div class="additional-context">
+      <label class="additional-context-label">📝 Additional context (optional):</label>
+      <textarea id="additionalContext" placeholder="Add constraints, requirements, or specific details..."></textarea>
+    </div>
   </div>
   
+  <!-- Tip -->
+  <div class="tip" id="tip">
+    💡 Copilot already sees your code. This generates an optimized prompt with expert role + clear requirements.
+  </div>
+  
+  <!-- Generate Button -->
   <button id="generateBtn" class="btn btn-primary">⚡ Generate Prompt</button>
   
+  <!-- Output Section -->
   <div class="output-section">
-    <div id="qualitySection" class="quality-section hidden">
-      <div class="quality-header">
-        <span id="qualityLabel">Prompt Quality</span>
-        <span>
-          <span id="qualityScore" class="quality-score">--</span>
-          <span id="likelihoodBadge" class="likelihood-badge hidden"></span>
-        </span>
+    <!-- Metadata -->
+    <div id="metadata" class="metadata hidden">
+      <div class="metadata-row">
+        <span class="meta-item"><span>📦</span> <span class="meta-value" id="metaLanguage">--</span></span>
+        <span class="meta-item"><span>🔧</span> <span class="meta-value" id="metaFrameworks">--</span></span>
+        <span class="meta-item"><span>📄</span> <span class="meta-value" id="metaInstructions">--</span></span>
       </div>
-      <div class="quality-bar">
-        <div id="qualityBarFill" class="quality-bar-fill" style="width: 0%"></div>
+      <div class="metadata-row" style="margin-top: 4px;">
+        <span class="meta-item"><span>📁</span> <span class="meta-value" id="metaRepoContext">--</span></span>
+        <span class="meta-item"><span>🔗</span> <span class="meta-value" id="metaDependencies">--</span></span>
       </div>
-      <div id="qualityExplanation" class="quality-explanation"></div>
-      <div id="qualityDimensions" class="quality-dimensions hidden"></div>
-      <div id="suggestions" class="suggestions hidden"></div>
     </div>
     
+    <!-- Edit Toggle -->
+    <div class="edit-toggle hidden" id="editToggle">
+      <span class="edit-toggle-label">Generated Prompt</span>
+      <button class="edit-btn" id="editBtn">✏️ Edit</button>
+    </div>
+    
+    <!-- Output (Read-only) -->
     <div id="output"></div>
     
-    <div id="stats" class="stats hidden">
-      <div class="stat-item">📝 <span id="charCount">0</span> chars</div>
-      <div class="stat-item">📄 <span id="lineCount">0</span> lines</div>
-    </div>
+    <!-- Editable Output -->
+    <textarea id="editableOutput" class="hidden"></textarea>
     
+    <!-- Actions -->
     <div class="actions hidden" id="actions">
-      <button class="btn btn-secondary" onclick="copy()">📋 Copy</button>
-      <button class="btn btn-primary" onclick="sendToCopilot()">💬 Send to Copilot</button>
+      <button class="btn btn-secondary" id="copyBtn">📋 Copy</button>
+      <button class="btn btn-primary" id="sendToCopilotBtn">💬 Send to Copilot</button>
     </div>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    let latestPrompt = "";
+    let latestPrompt = '';
+    let isEditing = false;
 
-    const input = document.getElementById("input");
-    const output = document.getElementById("output");
-    const actions = document.getElementById("actions");
-    const generateBtn = document.getElementById("generateBtn");
-    const qualitySection = document.getElementById("qualitySection");
-    const qualityScore = document.getElementById("qualityScore");
-    const qualityBarFill = document.getElementById("qualityBarFill");
-    const qualityExplanation = document.getElementById("qualityExplanation");
-    const qualityDimensions = document.getElementById("qualityDimensions");
-    const likelihoodBadge = document.getElementById("likelihoodBadge");
-    const suggestions = document.getElementById("suggestions");
-    const stats = document.getElementById("stats");
-    const charCount = document.getElementById("charCount");
-    const lineCount = document.getElementById("lineCount");
-    const tip = document.getElementById("tip");
+    // Security: HTML escape function
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
 
-    generateBtn.addEventListener("click", () => {
+    // DOM Elements
+    const input = document.getElementById('input');
+    const output = document.getElementById('output');
+    const editableOutput = document.getElementById('editableOutput');
+    const actions = document.getElementById('actions');
+    const generateBtn = document.getElementById('generateBtn');
+    const metadata = document.getElementById('metadata');
+    const editToggle = document.getElementById('editToggle');
+    const editBtn = document.getElementById('editBtn');
+    const tip = document.getElementById('tip');
+    
+    // Options
+    const optExplanation = document.getElementById('optExplanation');
+    const optDocumentation = document.getElementById('optDocumentation');
+    const optTests = document.getElementById('optTests');
+    const optProjectInstructions = document.getElementById('optProjectInstructions');
+    const additionalContext = document.getElementById('additionalContext');
+
+    // Generate
+    generateBtn.addEventListener('click', () => {
       const text = input.value.trim();
       if (!text) {
         output.innerHTML = '<span class="error">⚠️ Please enter a task description.</span>';
         return;
       }
-      vscode.postMessage({ command: "generate", text });
+      
+      vscode.postMessage({
+        command: 'generateFocused',
+        text,
+        options: {
+          includeExplanation: optExplanation.checked,
+          includeDocumentation: optDocumentation.checked,
+          includeTests: optTests.checked,
+          includeProjectInstructions: optProjectInstructions.checked,
+          additionalContext: additionalContext.value.trim() || undefined
+        }
+      });
     });
 
-    // Allow Ctrl+Enter to generate
-    input.addEventListener("keydown", (e) => {
-      if (e.ctrlKey && e.key === "Enter") {
+    // Ctrl+Enter to generate
+    input.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
         generateBtn.click();
       }
     });
 
+    // Toggle edit mode
+    function toggleEdit() {
+      isEditing = !isEditing;
+      if (isEditing) {
+        editableOutput.value = latestPrompt;
+        output.classList.add('hidden');
+        editableOutput.classList.remove('hidden');
+        editBtn.textContent = '✓ Done';
+      } else {
+        latestPrompt = editableOutput.value;
+        output.textContent = latestPrompt;
+        output.classList.remove('hidden');
+        editableOutput.classList.add('hidden');
+        editBtn.textContent = '✏️ Edit';
+      }
+    }
+
+    // Copy
     function copy() {
-      if (latestPrompt) {
-        vscode.postMessage({ command: "copy", text: latestPrompt });
+      const text = isEditing ? editableOutput.value : latestPrompt;
+      if (text) {
+        vscode.postMessage({ command: 'copy', text });
       }
     }
 
+    // Send to Copilot
     function sendToCopilot() {
-      if (latestPrompt) {
-        vscode.postMessage({ command: "sendToCopilot", text: latestPrompt });
+      const text = isEditing ? editableOutput.value : latestPrompt;
+      if (text) {
+        vscode.postMessage({ command: 'sendToCopilot', text });
       }
     }
 
-    function getQualityClass(score) {
-      if (score >= 70) return "high";
-      if (score >= 40) return "medium";
-      return "low";
-    }
+    // Event Listeners
+    editBtn.addEventListener('click', toggleEdit);
+    document.getElementById('copyBtn').addEventListener('click', copy);
+    document.getElementById('sendToCopilotBtn').addEventListener('click', sendToCopilot);
 
-    window.addEventListener("message", event => {
+    // Handle messages
+    window.addEventListener('message', event => {
       const msg = event.data;
 
-      if (msg.command === "loading") {
-        output.innerHTML = '<span class="loading"><span class="loading-spinner">⚙️</span> Analyzing repository structure and generating intelligent prompt...</span>';
+      if (msg.command === 'loading') {
+        output.innerHTML = '<span class="loading">⚙️ Generating optimized prompt...</span>';
         generateBtn.disabled = true;
-        generateBtn.textContent = "⏳ Analyzing...";
-        actions.classList.add("hidden");
-        qualitySection.classList.add("hidden");
-        stats.classList.add("hidden");
-        tip.classList.add("hidden");
+        generateBtn.textContent = '⏳ Generating...';
+        actions.classList.add('hidden');
+        metadata.classList.add('hidden');
+        editToggle.classList.add('hidden');
+        tip.classList.add('hidden');
       }
 
-      if (msg.command === "result") {
+      if (msg.command === 'focusedResult') {
         latestPrompt = msg.content;
         output.textContent = msg.content;
+        output.classList.remove('hidden');
+        editableOutput.classList.add('hidden');
+        isEditing = false;
+        editBtn.textContent = '✏️ Edit';
         
-        // Update quality display
-        const qClass = getQualityClass(msg.score);
-        qualityScore.textContent = msg.score + "%";
-        qualityScore.className = "quality-score " + qClass;
-        qualityBarFill.style.width = msg.score + "%";
-        qualityBarFill.className = "quality-bar-fill " + qClass;
-        qualityExplanation.textContent = msg.scoreExplanation || "";
+        // Update metadata - basic info
+        document.getElementById('metaLanguage').textContent = msg.metadata.primaryLanguage || '--';
+        document.getElementById('metaFrameworks').textContent = msg.metadata.frameworks.slice(0, 2).join(', ') || 'None';
+        const instrStatus = msg.metadata.hasProjectInstructions ? '✓ Instructions' : '✗ No instructions';
+        document.getElementById('metaInstructions').textContent = instrStatus;
+        document.getElementById('metaInstructions').classList.toggle('good', msg.metadata.hasProjectInstructions);
         
-        // Show likelihood badge
-        if (msg.qualityDetails && msg.qualityDetails.likelihood) {
-          likelihoodBadge.textContent = msg.qualityDetails.likelihood + " success";
-          likelihoodBadge.className = "likelihood-badge " + msg.qualityDetails.likelihood;
-          likelihoodBadge.classList.remove("hidden");
-        } else {
-          likelihoodBadge.classList.add("hidden");
-        }
+        // Update metadata - context from classic mode
+        const repoStatus = msg.metadata.hasRepoContext ? '✓ Repo Context' : '✗ No context';
+        document.getElementById('metaRepoContext').textContent = repoStatus;
+        document.getElementById('metaRepoContext').classList.toggle('good', msg.metadata.hasRepoContext);
         
-        // Render quality dimensions
-        if (msg.qualityDetails && msg.qualityDetails.dimensions) {
-          qualityDimensions.innerHTML = msg.qualityDetails.dimensions
-            .map(d => \`
-              <div class="dimension">
-                <div class="dimension-header">
-                  <span class="dimension-name">\${d.name}</span>
-                  <span class="dimension-score \${d.status}">\${d.score}%</span>
-                </div>
-                <div class="dimension-bar">
-                  <div class="dimension-bar-fill \${d.status}" style="width: \${d.score}%"></div>
-                </div>
-              </div>
-            \`).join("");
-          qualityDimensions.classList.remove("hidden");
-        } else {
-          qualityDimensions.classList.add("hidden");
-        }
+        const depStatus = msg.metadata.hasDependencyAnalysis ? '✓ Deps Analyzed' : '○ No deps';
+        document.getElementById('metaDependencies').textContent = depStatus;
+        document.getElementById('metaDependencies').classList.toggle('good', msg.metadata.hasDependencyAnalysis);
         
-        // Show suggestions if any
-        if (msg.suggestions && msg.suggestions.length > 0) {
-          suggestions.innerHTML = msg.suggestions
-            .map(s => '<div class="suggestion-item">' + s + '</div>')
-            .join("");
-          suggestions.classList.remove("hidden");
-        } else {
-          suggestions.classList.add("hidden");
-        }
-        
-        // Update stats
-        charCount.textContent = msg.content.length.toLocaleString();
-        lineCount.textContent = msg.content.split("\\n").length.toLocaleString();
-        
-        qualitySection.classList.remove("hidden");
-        stats.classList.remove("hidden");
-        actions.classList.remove("hidden");
+        metadata.classList.remove('hidden');
+        editToggle.classList.remove('hidden');
+        actions.classList.remove('hidden');
         generateBtn.disabled = false;
-        generateBtn.textContent = "⚡ Generate Prompt";
+        generateBtn.textContent = '⚡ Generate Prompt';
       }
 
-      if (msg.command === "error") {
-        output.innerHTML = '<span class="error">❌ Error: ' + msg.message + '</span>';
+      if (msg.command === 'error') {
+        output.innerHTML = '<span class="error">❌ ' + escapeHtml(msg.message) + '</span>';
         generateBtn.disabled = false;
-        generateBtn.textContent = "⚡ Generate Prompt";
-        tip.classList.remove("hidden");
+        generateBtn.textContent = '⚡ Generate Prompt';
+        tip.classList.remove('hidden');
       }
     });
   </script>

@@ -35,7 +35,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FileStructureBuilder = void 0;
 exports.buildCompactStructure = buildCompactStructure;
-exports.buildDetailedStructure = buildDetailedStructure;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const DEFAULT_OPTIONS = {
@@ -237,18 +236,6 @@ function buildCompactStructure(rootPath) {
     const builder = new FileStructureBuilder({
         maxDepth: 3,
         maxItemsPerLevel: 12,
-        showFileCount: true,
-        prioritizeFolders: true
-    });
-    return builder.build(rootPath);
-}
-/**
- * Creates a detailed structure for deep analysis
- */
-function buildDetailedStructure(rootPath) {
-    const builder = new FileStructureBuilder({
-        maxDepth: 5,
-        maxItemsPerLevel: 20,
         showFileCount: true,
         prioritizeFolders: true
     });

@@ -62,13 +62,24 @@ class PromptEngine {
         // 5. Detect scenario from user input
         const scenario = this.resolver.resolve(userInput);
         // 6. Get repo context summary (tech stack, dependencies)
-        const repoContext = this.compressor.compress(scan);
+        let repoContext = this.compressor.compress(scan);
         const techStack = this.compressor.getTechStack();
-        // 7. Detect framework
-        const framework = techStack?.frameworks[0]?.name ||
+        // Enhance repo context with BMS-specific information if detected
+        if (techStack?.architecture.bms) {
+            repoContext = enhanceWithBmsContext(repoContext, techStack.architecture.bms);
+        }
+        // 7. Detect framework (use BMS framework if available)
+        let framework = techStack?.frameworks[0]?.name ||
             (scan.insights.hasAngular ? "Angular" :
                 scan.insights.hasReact ? "React" :
                     techStack?.primaryLanguage || "TypeScript");
+        // Add version info for C++ BMS projects
+        if (framework === "C++ BMS/MDW" && techStack?.frameworks[0]?.version) {
+            framework = `${framework} (${techStack.frameworks[0].version})`;
+            if (techStack.architecture.bms?.cppStandard) {
+                framework += ` ${techStack.architecture.bms.cppStandard}`;
+            }
+        }
         // 8. Get test frameworks (collect all detected testing tools)
         const testFramework = techStack?.architecture.testing.framework ||
             scan.insights.testFramework || "Jest";
@@ -156,6 +167,23 @@ function detectTestCommands(root, techStack, testFrameworks) {
     const commands = {};
     const fs = require("fs");
     const path = require("path");
+    // Check for C++ BMS project (bmsrc file)
+    const bmsrcPath = path.join(root, "bmsrc");
+    if (fs.existsSync(bmsrcPath)) {
+        // BMS default test commands
+        commands.unit = `bms test`;
+        commands.all = `bms test --coverage`;
+        // Check for specific test profiles in bmsrc
+        try {
+            const bmsrcContent = fs.readFileSync(bmsrcPath, "utf-8");
+            if (bmsrcContent.includes("valgrind")) {
+                commands.integration = `bms test --valgrind`;
+            }
+        }
+        catch {
+            // Ignore
+        }
+    }
     // Try to detect from package.json (Node.js projects)
     const packageJsonPath = path.join(root, "package.json");
     if (fs.existsSync(packageJsonPath)) {
@@ -257,5 +285,61 @@ function detectTestCommands(root, techStack, testFrameworks) {
         commands.all = `gradle check`;
     }
     return commands;
+}
+/**
+ * Enhance repo context with C++ BMS/MDW specific information
+ */
+function enhanceWithBmsContext(baseContext, bmsInfo) {
+    const sections = [baseContext];
+    // Add BMS Framework section
+    sections.push("\n# C++ BMS/MDW Information\n");
+    sections.push(`**Framework:** C++ BMS/MDW`);
+    if (bmsInfo.middlewareVersion) {
+        sections.push(`**Middleware:** ${bmsInfo.middlewareVersion}`);
+    }
+    if (bmsInfo.cppStandard) {
+        sections.push(`**C++ Standard:** ${bmsInfo.cppStandard}`);
+    }
+    // Add Modules
+    if (bmsInfo.modules.length > 0) {
+        sections.push(`\n**Modules (${bmsInfo.modules.length}):**`);
+        bmsInfo.modules.slice(0, 10).forEach(mod => {
+            sections.push(`- ${mod}`);
+        });
+        if (bmsInfo.modules.length > 10) {
+            sections.push(`  ... and ${bmsInfo.modules.length - 10} more`);
+        }
+    }
+    // Add Design Patterns
+    if (bmsInfo.designPatterns.length > 0) {
+        sections.push(`\n**Design Patterns:**`);
+        bmsInfo.designPatterns.forEach(pattern => {
+            sections.push(`- ${pattern}`);
+        });
+    }
+    // Add Middleware Patterns
+    if (bmsInfo.middlewarePatterns.length > 0) {
+        sections.push(`\n**Middleware Patterns:**`);
+        bmsInfo.middlewarePatterns.forEach(pattern => {
+            sections.push(`- ${pattern}`);
+        });
+    }
+    // Add Dependencies
+    if (bmsInfo.bmsDependencies.length > 0) {
+        sections.push(`\n**BMS Dependencies (${bmsInfo.bmsDependencies.length}):**`);
+        bmsInfo.bmsDependencies.slice(0, 5).forEach(dep => {
+            sections.push(`- ${dep}`);
+        });
+        if (bmsInfo.bmsDependencies.length > 5) {
+            sections.push(`  ... and ${bmsInfo.bmsDependencies.length - 5} more`);
+        }
+    }
+    if (bmsInfo.submodules.length > 0) {
+        sections.push(`\n**Submodules:**`);
+        bmsInfo.submodules.forEach(sub => {
+            sections.push(`- ${sub}`);
+        });
+    }
+    return sections.join("\n");
 }
 //# sourceMappingURL=engine.js.map

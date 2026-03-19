@@ -30,7 +30,7 @@
       "activitybar": [
         {
           "id": "repoPrompt",
-          "title": "Repo Prompt",
+          "title": "PromptCraft",
           "icon": "media/icon.svg"
         }
       ]
@@ -40,7 +40,7 @@
         {
           "type": "webview",
           "id": "repoPrompt.sidebar",
-          "name": "Prompt Builder"
+          "name": "PromptCraft"
         }
       ]
     },

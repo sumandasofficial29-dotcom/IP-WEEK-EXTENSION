@@ -192,7 +192,7 @@ class CppBMSDetector {
             if (/Abstract\w+\.(cpp|hpp)/.test(filePath) && !bmsInfo.designPatterns.includes("Abstract/Template Method")) {
                 bmsInfo.designPatterns.push("Abstract/Template Method");
             }
-        }, 3);
+        }, 6);
         // Detect test framework
         const testDirs = ["test", "tests", "regression"];
         for (const dir of testDirs) {

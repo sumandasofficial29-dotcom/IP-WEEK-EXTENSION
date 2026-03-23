@@ -157,13 +157,24 @@ class PromptEngine {
         // 4. Detect scenario from user input
         const scenario = this.resolver.resolve(userInput);
         // 5. Get repo context summary (tech stack, dependencies, folder structure)
-        const repoContext = this.compressor.compress(scan);
+        let repoContext = this.compressor.compress(scan);
         const techStack = this.compressor.getTechStack();
-        // 6. Detect framework
-        const framework = techStack?.frameworks[0]?.name ||
+        // Enhance repo context with BMS-specific information if detected (design patterns, middleware patterns, etc.)
+        if (techStack?.architecture.bms) {
+            repoContext = enhanceWithBmsContext(repoContext, techStack.architecture.bms);
+        }
+        // 6. Detect framework (use BMS framework if available)
+        let framework = techStack?.frameworks[0]?.name ||
             (scan.insights.hasAngular ? "Angular" :
                 scan.insights.hasReact ? "React" :
                     techStack?.primaryLanguage || "TypeScript");
+        // Add version info for C++ BMS projects
+        if (framework === "C++ BMS/MDW" && techStack?.frameworks[0]?.version) {
+            framework = `${framework} (${techStack.frameworks[0].version})`;
+            if (techStack.architecture.bms?.cppStandard) {
+                framework += ` ${techStack.architecture.bms.cppStandard}`;
+            }
+        }
         // 7. Get test frameworks
         const testFramework = techStack?.architecture.testing.framework ||
             scan.insights.testFramework || "Jest";

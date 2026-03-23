@@ -156,6 +156,20 @@ export function generateFocusedPrompt(input: FocusedPromptInput): FocusedPromptO
     });
   }
 
+  // Section 8b: Unit Tests (if includeTests is enabled)
+  if (input.options?.includeTests) {
+    const testSection = buildTestSection(input, testingConfig);
+    if (testSection) {
+      sections.push({
+        id: "unitTests",
+        title: "Unit Tests",
+        content: testSection,
+        required: false,
+        editable: true
+      });
+    }
+  }
+
   // Section 9: Requirements - what we expect from the output
   sections.push({
     id: "requirements",
@@ -283,45 +297,23 @@ function buildTaskSection(input: FocusedPromptInput): string {
  * Build the role section - LLM-friendly expert persona
  */
 function buildRoleSection(input: FocusedPromptInput): string {
-  // Map task action to appropriate expert role
-  const roleMap: Record<string, string> = {
-    "fix": "Senior Debugging Engineer",
-    "create": "Principal Software Engineer",
-    "refactor": "Senior Software Architect",
-    "explain": "Technical Documentation Expert",
-    "test": "Senior QA Engineer",
-    "review": "Code Review Specialist",
-    "optimize": "Performance Engineering Expert",
-    "document": "Technical Writer",
-    "migrate": "Migration Specialist",
-    "secure": "Security Engineer"
+  const personas: Record<string, { role: string; mindset: string }> = {
+    fix:      { role: "Senior Debugging Engineer",        mindset: "You approach problems systematically: identify root cause, implement minimal fix, verify no regressions." },
+    create:   { role: "Principal Software Engineer",     mindset: "You write clean, maintainable code following SOLID principles and industry best practices." },
+    refactor: { role: "Senior Software Architect",       mindset: "You improve code structure while preserving behavior, focusing on readability and maintainability." },
+    explain:  { role: "Technical Documentation Expert",  mindset: "You break down complex concepts into clear, digestible explanations with practical examples." },
+    test:     { role: "Senior QA Engineer",              mindset: "You create comprehensive test suites covering edge cases, error conditions, and business logic." },
+    review:   { role: "Code Review Specialist",          mindset: "You provide constructive, actionable feedback focusing on correctness, performance, and maintainability." },
+    optimize: { role: "Performance Engineering Expert",  mindset: "You identify bottlenecks through measurement, not assumptions, and apply targeted optimizations." },
+    document: { role: "Technical Writer",                mindset: "You write clear, concise documentation that helps developers understand and use the code effectively." },
+    migrate:  { role: "Migration Specialist",            mindset: "You plan migrations carefully, ensuring backward compatibility and minimal disruption." },
+    secure:   { role: "Security Engineer",               mindset: "You follow security best practices and consider potential attack vectors systematically." },
   };
-  
-  const role = roleMap[input.task.action] || "Principal Software Engineer";
-  
-  // Build tech expertise
-  const techExpertise = [input.primaryLanguage, ...input.frameworks.slice(0, 3)]
-    .filter(Boolean)
-    .join(", ");
-  
+
+  const { role, mindset } = personas[input.task.action] ?? personas.create;
+  const techExpertise = [input.primaryLanguage, ...input.frameworks.slice(0, 3)].filter(Boolean).join(", ");
   const expertiseStr = techExpertise ? ` with deep expertise in ${techExpertise}` : "";
-  
-  // Action-specific mindset
-  const mindsetMap: Record<string, string> = {
-    "fix": "You approach problems systematically: identify root cause, implement minimal fix, verify no regressions.",
-    "create": "You write clean, maintainable code following SOLID principles and industry best practices.",
-    "refactor": "You improve code structure while preserving behavior, focusing on readability and maintainability.",
-    "explain": "You break down complex concepts into clear, digestible explanations with practical examples.",
-    "test": "You create comprehensive test suites covering edge cases, error conditions, and business logic.",
-    "review": "You provide constructive, actionable feedback focusing on correctness, performance, and maintainability.",
-    "optimize": "You identify bottlenecks through measurement, not assumptions, and apply targeted optimizations.",
-    "document": "You write clear, concise documentation that helps developers understand and use the code effectively.",
-    "migrate": "You plan migrations carefully, ensuring backward compatibility and minimal disruption.",
-    "secure": "You follow security best practices and consider potential attack vectors systematically."
-  };
-  
-  const mindset = mindsetMap[input.task.action] || mindsetMap["create"];
-  
+
   return `**You are a ${role}**${expertiseStr}.
 
 ${mindset}
@@ -330,40 +322,123 @@ Think step-by-step and explain your reasoning.`;
 }
 
 /**
+ * Build the unit tests section when includeTests is enabled
+ */
+function buildTestSection(input: FocusedPromptInput, testConfig: TestingConfig): string {
+  const lines: string[] = [];
+
+  // Detect Robot Framework: by test framework name, active .robot file, or detected frameworks list
+  const isRobotFramework =
+    testConfig.framework?.toLowerCase().includes("robot") ||
+    input.activeFilePath?.endsWith(".robot") ||
+    input.frameworks.some(f => f.toLowerCase().includes("robot"));
+
+  lines.push("## Unit Tests");
+  lines.push("Write unit tests for the above implementation:");
+  lines.push("");
+
+  if (testConfig.framework) {
+    lines.push(`**Framework:** ${testConfig.framework}`);
+  }
+  if (testConfig.commands.length > 0) {
+    lines.push(`**Run with:** \`${testConfig.commands[0]}\``);
+  }
+
+  // Robot Framework: Prerequisites before running tests
+  if (isRobotFramework) {
+    lines.push("");
+    lines.push("**Prerequisites (must be done before running tests):**");
+    lines.push("");
+    lines.push("1. **Build the C++ code first:**");
+    lines.push("   ```sh");
+    lines.push("   bms build");
+    lines.push("   ```");
+    lines.push("");
+    lines.push("2. **Deploy to CMK (choose one):**");
+    lines.push("");
+    lines.push("   - **Quick restart** (if binaries already installed):");
+    lines.push("   ```sh");
+    lines.push("   cmk restart");
+    lines.push("   ```");
+    lines.push("");
+    lines.push("   - **Fresh install** (after structural changes or first deployment):");
+    lines.push("   ```sh");
+    lines.push("   cmk stop && cmk install && cmk start");
+    lines.push("   ```");
+    lines.push("");
+    lines.push("3. **Then run the Robot tests:**");
+    if (testConfig.commands.length > 0) {
+      lines.push("   ```sh");
+      lines.push(`   ${testConfig.commands[0]}`);
+      lines.push("   ```");
+    }
+  }
+
+  lines.push("");
+  lines.push("**Requirements:**");
+  lines.push("- Cover happy path and edge cases");
+  lines.push("- Follow project test naming conventions");
+  if (isRobotFramework) {
+    lines.push("- Use Robot Framework keyword-driven style");
+    lines.push("- Place test resources in the appropriate `profiles_regression/` or `regression/` folder");
+  } else {
+    lines.push("- Use AAA pattern (Arrange → Act → Assert)");
+    lines.push("- Keep tests fast and isolated");
+  }
+
+  if (testConfig.instructions) {
+    lines.push("");
+    lines.push("**Test Instructions:**");
+    lines.push(testConfig.instructions);
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Build requirements section - what we expect from the LLM
  */
 function buildRequirementsSection(input: FocusedPromptInput, testConfig: TestingConfig): string {
   const requirements: string[] = [];
-  
+  const opts = input.options;
+
   // Task-specific requirements
   switch (input.task.action) {
     case "fix":
       requirements.push("1. **Identify root cause** - Explain what's causing the issue");
       requirements.push("2. **Provide fix** - Show the corrected code");
       requirements.push("3. **Explain the fix** - Why this solution works");
-      if (testConfig.commands.length > 0) {
+      if (opts?.includeTests && testConfig.commands.length > 0) {
+        requirements.push(`4. **Verify** - Write a regression test and run: \`${testConfig.commands[0]}\``);
+      } else if (testConfig.commands.length > 0) {
         requirements.push(`4. **Verify** - Test with: \`${testConfig.commands[0]}\``);
       }
       break;
-      
-    case "create":
-      requirements.push("1. **Implementation** - Complete, working code");
-      requirements.push("2. **Explain approach** - Why this design was chosen");
-      requirements.push("3. **Usage example** - How to use the new code");
+
+    case "create": {
+      let n = 1;
+      requirements.push(`${n++}. **Implementation** - Complete, working code`);
+      if (opts?.includeExplanation !== false) { requirements.push(`${n++}. **Explain approach** - Why this design was chosen`); }
+      requirements.push(`${n++}. **Usage example** - How to use the new code`);
+      if (opts?.includeTests) { requirements.push(`${n++}. **Unit tests** - See Unit Tests section above`); }
       break;
-      
+    }
+
     case "refactor":
       requirements.push("1. **Show changes** - Before/after comparison");
       requirements.push("2. **Explain improvements** - What's better and why");
       requirements.push("3. **Verify behavior** - Confirm no functionality changes");
+      if (opts?.includeTests) {
+        requirements.push("4. **Regression tests** - Confirm unchanged behavior with tests");
+      }
       break;
-      
+
     case "explain":
       requirements.push("1. **Overview** - What does this code do (2-3 sentences)");
       requirements.push("2. **Step-by-step** - Walk through the key parts");
       requirements.push("3. **Key insights** - Important things to understand");
       break;
-      
+
     case "test":
       requirements.push("1. **Test cases** - Cover happy path and edge cases");
       requirements.push("2. **Test structure** - Using project's test framework");
@@ -371,22 +446,27 @@ function buildRequirementsSection(input: FocusedPromptInput, testConfig: Testing
         requirements.push(`3. **Framework** - Use ${testConfig.framework}`);
       }
       break;
-      
+
     default:
       requirements.push("1. **Solution** - Complete implementation");
       requirements.push("2. **Explanation** - Step-by-step reasoning");
       requirements.push("3. **Code comments** - Document key decisions");
+      if (opts?.includeTests) {
+        requirements.push("4. **Unit tests** - See Unit Tests section above");
+      }
   }
-  
-  // Add documentation requirement for significant changes
-  if (["create", "modify", "refactor"].includes(input.task.action)) {
+
+  // Add documentation requirement (only when explicitly requested or for significant changes without the flag being set)
+  const wantsDocs = opts?.includeDocumentation === true ||
+    (opts?.includeDocumentation === undefined && ["create", "modify", "refactor"].includes(input.task.action));
+  if (wantsDocs) {
     requirements.push("");
     requirements.push("**Documentation:** Add appropriate code comments/docstrings explaining:");
     requirements.push("- Purpose of functions/classes");
     requirements.push("- Parameters and return values");
     requirements.push("- Any important side effects");
   }
-  
+
   return requirements.join("\n");
 }
 
